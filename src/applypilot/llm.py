@@ -35,14 +35,23 @@ _INFERRED_SOURCE_ORDER: tuple[tuple[str, str], ...] = (
     ("gemini", "GEMINI_API_KEY"),
     ("openai", "OPENAI_API_KEY"),
     ("anthropic", "ANTHROPIC_API_KEY"),
+    ("lightning", "LIGHTNING_API_KEY"),
     ("openai", "LLM_URL"),
 )
 _DEFAULT_MODEL_BY_PROVIDER = {
     "gemini": "gemini/gemini-3.0-flash",
     "openai": "openai/gpt-5-mini",
     "anthropic": "anthropic/claude-haiku-4-5",
+    "lightning": "openai/lightning-ai/gemma-4-31B-it",
+    "gemini-cli": "gemini-cli/gemini-3.1-pro-preview",
 }
 _DEFAULT_LOCAL_MODEL = "openai/local-model"
+_DEFAULT_FALLBACK_MODEL = "gemini/gemini-2.5-flash-preview-04-17"
+
+# Auto-detected api_base URLs for providers that need them.
+_PROVIDER_API_BASE = {
+    "lightning": "https://lightning.ai/api/v1",
+}
 
 
 @dataclass(frozen=True)
@@ -54,6 +63,9 @@ class LLMConfig:
     model: str
     api_key: str
     use_streaming: bool = False
+    fallback_model: str | None = None
+    fallback_api_key: str | None = None
+    fallback_api_base: str | None = None
 
 
 class ChatMessage(TypedDict):
@@ -124,11 +136,13 @@ def resolve_llm_config(env: Mapping[str, str] | None = None) -> LLMConfig:
         "gemini": "GEMINI_API_KEY",
         "openai": "OPENAI_API_KEY",
         "anthropic": "ANTHROPIC_API_KEY",
+        "lightning": "LIGHTNING_API_KEY",
     }
     api_key_env = provider_api_key_env.get(provider, "LLM_API_KEY")
     api_key = _env_get(env_map, api_key_env) or _env_get(env_map, "LLM_API_KEY")
 
-    if not api_key and not local_url:
+    # gemini-cli uses the CLI's own auth — no API key needed.
+    if not api_key and not local_url and provider != "gemini-cli":
         key_help = f"{api_key_env} or LLM_API_KEY" if provider in provider_api_key_env else "LLM_API_KEY"
         raise RuntimeError(
             f"Missing credentials for LLM_MODEL '{model}'. Set {key_help}, or set LLM_URL for "
@@ -138,13 +152,91 @@ def resolve_llm_config(env: Mapping[str, str] | None = None) -> LLMConfig:
     # Check if streaming mode is enabled via environment variable
     use_streaming = _env_get(env_map, "LLM_STREAMING_MODE").lower() in ("true", "1", "yes")
 
+    # Resolve api_base: explicit LLM_URL takes precedence, then provider defaults.
+    api_base = local_url.rstrip("/") if local_url else _PROVIDER_API_BASE.get(provider)
+
+    # Resolve fallback model from env or use default.
+    fallback_model = _env_get(env_map, "LLM_FALLBACK_MODEL") or _DEFAULT_FALLBACK_MODEL
+    fallback_provider = _provider_from_model(fallback_model)
+    fallback_api_key_env = provider_api_key_env.get(fallback_provider, "LLM_API_KEY")
+    fallback_api_key = _env_get(env_map, fallback_api_key_env) or _env_get(env_map, "LLM_API_KEY") or api_key
+    fallback_api_base = _PROVIDER_API_BASE.get(fallback_provider)
+
     return LLMConfig(
         provider=provider,
-        api_base=local_url.rstrip("/") if local_url else None,
+        api_base=api_base,
         model=model,
         api_key=api_key,
         use_streaming=use_streaming,
+        fallback_model=fallback_model,
+        fallback_api_key=fallback_api_key,
+        fallback_api_base=fallback_api_base,
     )
+
+
+def _call_gemini_cli(model: str, messages: list[ChatMessage], timeout: int) -> str:
+    """Invoke the `gemini` CLI as a completion backend.
+
+    Messages are flattened into a single prompt. The CLI prints the model
+    response to stdout. Raises RuntimeError on non-zero exit or empty output.
+    """
+    import shutil
+    import subprocess
+
+    if shutil.which("gemini") is None:
+        raise RuntimeError(
+            "gemini CLI not found on PATH. Install from https://github.com/google-gemini/gemini-cli"
+        )
+
+    parts: list[str] = []
+    for m in messages:
+        role = m.get("role", "user").upper()
+        content = m.get("content", "")
+        if role == "SYSTEM":
+            parts.append(f"[SYSTEM INSTRUCTIONS]\n{content}")
+        else:
+            parts.append(f"[{role}]\n{content}")
+    prompt = "\n\n".join(parts)
+
+    # model is "gemini-cli/gemini-3.1-pro-preview" — strip prefix for -m flag.
+    _, _, model_name = model.partition("/")
+
+    # Always pass -m explicitly so the CLI doesn't fall back to its config default.
+    cmd = ["gemini", "-m", model_name, "-p", prompt]
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"gemini CLI timed out after {timeout}s") from exc
+
+    if result.returncode != 0:
+        stderr = (result.stderr or "").strip()[:500]
+        raise RuntimeError(f"gemini CLI exit {result.returncode}: {stderr}")
+
+    text = (result.stdout or "").strip()
+    if not text:
+        raise RuntimeError("gemini CLI returned empty output")
+    return text
+
+
+def _is_rate_limit_error(exc: BaseException) -> bool:
+    """Return True if *exc* originated from an HTTP 429 / rate-limit response."""
+    # litellm raises litellm.RateLimitError for 429s.
+    if type(exc).__name__ == "RateLimitError":
+        return True
+    # Some wrappers nest the real error; check status_code attribute.
+    status = getattr(exc, "status_code", None)
+    if status == 429:
+        return True
+    # Check the inner cause as well.
+    if exc.__cause__ and exc.__cause__ is not exc:
+        return _is_rate_limit_error(exc.__cause__)
+    return False
 
 
 class LLMClient:
@@ -156,6 +248,50 @@ class LLMClient:
         self.model = config.model
         self._use_streaming = config.use_streaming
         litellm.suppress_debug_info = True
+
+    def _do_completion(
+        self,
+        messages: list[ChatMessage],
+        *,
+        model: str,
+        api_key: str | None,
+        api_base: str | None,
+        max_output_tokens: int,
+        temperature: float | None,
+        timeout: int,
+        num_retries: int,
+        drop_params: bool,
+        **extra: Unpack[LiteLLMExtra],
+    ) -> str:
+        """Run a single litellm.completion() call and return text."""
+        # CLI backend: shell out instead of calling litellm.
+        if model.startswith("gemini-cli/"):
+            return _call_gemini_cli(model, messages, timeout)
+
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "max_tokens": max_output_tokens,
+            "timeout": timeout,
+            "num_retries": num_retries,
+            "drop_params": drop_params,
+            "api_key": api_key,
+            "api_base": api_base,
+        }
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+        kwargs.update(extra)
+
+        response = litellm.completion(**kwargs)
+
+        choices = getattr(response, "choices", None)
+        if not choices:
+            raise RuntimeError("LLM response contained no choices.")
+        content = response.choices[0].message.content
+        text = content.strip() if isinstance(content, str) else str(content).strip()
+        if not text:
+            raise RuntimeError("LLM response contained no text content.")
+        return text
 
     def chat(
         self,
@@ -180,45 +316,53 @@ class LLMClient:
                 **extra,
             )
 
-        # Standard non-streaming call
+        # Standard non-streaming call with optional fallback.
         try:
-            if temperature is None:
-                response = litellm.completion(
-                    model=self.model,
-                    messages=messages,
-                    max_tokens=max_output_tokens,
-                    timeout=timeout,
-                    num_retries=num_retries,
-                    drop_params=drop_params,
-                    api_key=self.config.api_key or None,
-                    api_base=self.config.api_base or None,
-                    **extra,
+            return self._do_completion(
+                messages,
+                model=self.model,
+                api_key=self.config.api_key or None,
+                api_base=self.config.api_base or None,
+                max_output_tokens=max_output_tokens,
+                temperature=temperature,
+                timeout=timeout,
+                num_retries=num_retries,
+                drop_params=drop_params,
+                **extra,
+            )
+        except Exception as primary_exc:
+            if not self.config.fallback_model:
+                raise RuntimeError(f"LLM request failed ({self.provider}/{self.model}): {primary_exc}") from primary_exc
+
+            is_rate_limit = _is_rate_limit_error(primary_exc)
+            if is_rate_limit:
+                log.warning(
+                    "Primary model %s hit rate limit (429), switching to fallback %s",
+                    self.model, self.config.fallback_model,
                 )
             else:
-                response = litellm.completion(
-                    model=self.model,
-                    messages=messages,
-                    max_tokens=max_output_tokens,
+                log.warning(
+                    "Primary model %s failed (%s), falling back to %s",
+                    self.model, primary_exc, self.config.fallback_model,
+                )
+            try:
+                return self._do_completion(
+                    messages,
+                    model=self.config.fallback_model,
+                    api_key=self.config.fallback_api_key or self.config.api_key or None,
+                    api_base=self.config.fallback_api_base or None,
+                    max_output_tokens=max_output_tokens,
                     temperature=temperature,
                     timeout=timeout,
                     num_retries=num_retries,
                     drop_params=drop_params,
-                    api_key=self.config.api_key or None,
-                    api_base=self.config.api_base or None,
                     **extra,
                 )
-
-            choices = getattr(response, "choices", None)
-            if not choices:
-                raise RuntimeError("LLM response contained no choices.")
-            content = response.choices[0].message.content
-            text = content.strip() if isinstance(content, str) else str(content).strip()
-
-            if not text:
-                raise RuntimeError("LLM response contained no text content.")
-            return text
-        except Exception as exc:  # pragma: no cover - provider SDK exception types vary by backend/version.
-            raise RuntimeError(f"LLM request failed ({self.provider}/{self.model}): {exc}") from exc
+            except Exception as fallback_exc:
+                raise RuntimeError(
+                    f"LLM request failed: primary ({self.model}): {primary_exc}; "
+                    f"fallback ({self.config.fallback_model}): {fallback_exc}"
+                ) from fallback_exc
 
     def _chat_streaming(
         self,
@@ -272,23 +416,128 @@ class LLMClient:
         return None
 
 
-_instance: LLMClient | None = None
+_clients: dict[str, LLMClient] = {}
 _lock = threading.Lock()
+_llm_yaml_cache: dict | None = None
+_env_loaded = False
 
 
-def get_client() -> LLMClient:
-    """Return (or create) the module-level LLMClient singleton."""
-    global _instance
-    if _instance is None:
+def _load_llm_yaml() -> dict | None:
+    """Load and cache ~/.applypilot/llm.yaml if it exists."""
+    global _llm_yaml_cache
+    if _llm_yaml_cache is not None:
+        return _llm_yaml_cache if _llm_yaml_cache else None
+    try:
+        from applypilot.config import LLM_CONFIG_PATH
+
+        if LLM_CONFIG_PATH.exists():
+            import yaml
+
+            with open(LLM_CONFIG_PATH, encoding="utf-8") as f:
+                _llm_yaml_cache = yaml.safe_load(f) or {}
+            log.info("Loaded per-task LLM config from %s", LLM_CONFIG_PATH)
+            return _llm_yaml_cache
+    except Exception as exc:
+        log.warning("Failed to load llm.yaml: %s", exc)
+    _llm_yaml_cache = {}
+    return None
+
+
+def _resolve_task_config(task: str) -> LLMConfig | None:
+    """Build an LLMConfig from llm.yaml for a given task, or None if not configured."""
+    yaml_cfg = _load_llm_yaml()
+    if not yaml_cfg:
+        return None
+
+    # Look up task-specific config, fall back to "default" section.
+    tasks = yaml_cfg.get("tasks") or {}
+    task_entry = tasks.get(task)
+    if not task_entry and task != "default":
+        task_entry = yaml_cfg.get("default")
+    if not task_entry:
+        return None
+
+    model = task_entry.get("model")
+    if not model:
+        return None
+
+    provider = _provider_from_model(model)
+
+    # Resolve API key: task-level api_key_env → provider default → LLM_API_KEY
+    api_key_env_name = task_entry.get("api_key_env")
+    if not api_key_env_name:
+        _provider_key_env = {
+            "gemini": "GEMINI_API_KEY",
+            "openai": "OPENAI_API_KEY",
+            "anthropic": "ANTHROPIC_API_KEY",
+            "lightning": "LIGHTNING_API_KEY",
+        }
+        api_key_env_name = _provider_key_env.get(provider, "LLM_API_KEY")
+    api_key = os.environ.get(api_key_env_name, "") or os.environ.get("LLM_API_KEY", "")
+
+    # Resolve api_base: task-level → provider default → LLM_URL
+    api_base = task_entry.get("api_base") or _PROVIDER_API_BASE.get(provider) or os.environ.get("LLM_URL", "")
+    api_base = api_base.rstrip("/") if api_base else None
+
+    use_streaming = str(task_entry.get("streaming", "")).lower() in ("true", "1", "yes")
+
+    # Resolve fallback model: task-level → global default.
+    _provider_key_env_fb = {
+        "gemini": "GEMINI_API_KEY",
+        "openai": "OPENAI_API_KEY",
+        "anthropic": "ANTHROPIC_API_KEY",
+        "lightning": "LIGHTNING_API_KEY",
+    }
+    fallback_model = task_entry.get("fallback") or _DEFAULT_FALLBACK_MODEL
+    fallback_provider = _provider_from_model(fallback_model)
+    # Explicit fallback_api_key_env takes priority (needed for cross-provider fallbacks).
+    fb_api_key_env = task_entry.get("fallback_api_key_env") or _provider_key_env_fb.get(fallback_provider, "LLM_API_KEY")
+    fallback_api_key = os.environ.get(fb_api_key_env, "") or os.environ.get("LLM_API_KEY", "") or api_key
+    fallback_api_base = task_entry.get("fallback_api_base") or _PROVIDER_API_BASE.get(fallback_provider)
+
+    return LLMConfig(
+        provider=provider,
+        api_base=api_base,
+        model=model,
+        api_key=api_key,
+        use_streaming=use_streaming,
+        fallback_model=fallback_model,
+        fallback_api_key=fallback_api_key,
+        fallback_api_base=fallback_api_base,
+    )
+
+
+def get_client(task: str = "default") -> LLMClient:
+    """Return (or create) an LLMClient for the given task.
+
+    When llm.yaml exists and defines the task, uses that config.
+    Otherwise falls back to the global env-var based config.
+    Clients are cached per task key.
+    """
+    global _env_loaded
+    if task not in _clients:
         with _lock:
-            if _instance is None:
-                try:
-                    from applypilot.config import load_env
+            if task not in _clients:
+                if not _env_loaded:
+                    try:
+                        from applypilot.config import load_env
 
-                    load_env()
-                except ModuleNotFoundError:
-                    log.debug("python-dotenv not installed; skipping .env auto-load in llm.get_client().")
-                config = resolve_llm_config()
-                log.info("LLM provider: %s  model: %s", config.provider, config.model)
-                _instance = LLMClient(config)
-    return _instance
+                        load_env()
+                    except ModuleNotFoundError:
+                        log.debug("python-dotenv not installed; skipping .env auto-load in llm.get_client().")
+                    _env_loaded = True
+
+                # Try task-specific config from llm.yaml first.
+                config = _resolve_task_config(task)
+                if config is None and task != "default":
+                    # No task-specific config — share the default client.
+                    default_client = get_client("default")
+                    _clients[task] = default_client
+                    return default_client
+                if config is None:
+                    # No llm.yaml at all — use env-var resolution (original behavior).
+                    config = resolve_llm_config()
+
+                log.info("LLM [%s] provider: %s  model: %s", task, config.provider, config.model)
+                _clients[task] = LLMClient(config)
+    return _clients[task]

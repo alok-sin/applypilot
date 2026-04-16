@@ -461,7 +461,7 @@ def extract_with_llm(page, url: str) -> dict:
     )
 
     try:
-        client = get_client()
+        client = get_client("enrich")
         t0 = time.time()
         raw = client.chat([{"role": "user", "content": prompt}], max_output_tokens=4096)
         elapsed = time.time() - t0

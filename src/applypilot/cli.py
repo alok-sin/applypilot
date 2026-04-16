@@ -199,6 +199,11 @@ def run(
         ),
     ),
     min_score: int = typer.Option(7, "--min-score", help="Minimum fit score for tailor/cover stages."),
+    rescore_above: Optional[int] = typer.Option(
+        None,
+        "--rescore-above",
+        help="Re-score jobs whose current fit_score is >= this value (useful with a gemini-cli/ model for free re-scoring).",
+    ),
     workers: int = typer.Option(1, "--workers", "-w", help="Parallel threads for discovery/enrichment stages."),
     stream: bool = typer.Option(False, "--stream", help="Run stages concurrently (streaming mode)."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview stages without executing."),
@@ -271,6 +276,7 @@ def run(
         headless=not show_browser,
         site_filter=site_filter,
         validation_mode=validation,
+        rescore_above=rescore_above,
     )
 
     if result.get("errors"):
@@ -601,7 +607,7 @@ def doctor() -> None:
                         "pip install --no-deps python-jobspy && pip install pydantic tls-client requests markdownify regex"))
 
     # --- Tier 2 checks ---
-    from applypilot.llm import resolve_llm_config
+    from applypilot.llm import resolve_llm_config, _load_llm_yaml, _resolve_task_config
 
     try:
         llm_cfg = resolve_llm_config()
@@ -612,14 +618,34 @@ def doctor() -> None:
                 "gemini": "Gemini",
                 "openai": "OpenAI",
                 "anthropic": "Anthropic",
+                "lightning": "Lightning AI",
             }.get(llm_cfg.provider, llm_cfg.provider)
             results.append(("LLM API key", ok_mark, f"{label} ({llm_cfg.model})"))
+        if llm_cfg.fallback_model:
+            results.append(("LLM fallback", ok_mark, llm_cfg.fallback_model))
     except RuntimeError:
         results.append(
             ("LLM API key", fail_mark,
-             "Set one of GEMINI_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, LLM_URL, "
+             "Set one of GEMINI_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, LIGHTNING_API_KEY, LLM_URL, "
              "or set LLM_MODEL with LLM_API_KEY in ~/.applypilot/.env")
         )
+
+    # Per-task LLM config from llm.yaml
+    from applypilot.config import LLM_CONFIG_PATH
+
+    yaml_cfg = _load_llm_yaml()
+    if yaml_cfg:
+        results.append(("llm.yaml", ok_mark, str(LLM_CONFIG_PATH)))
+        for task_name in ("discover", "enrich", "score", "tailor", "cover"):
+            task_cfg = _resolve_task_config(task_name)
+            if task_cfg:
+                fb = f"  fallback: {task_cfg.fallback_model}" if task_cfg.fallback_model else ""
+                results.append((f"  {task_name}", ok_mark, f"{task_cfg.model}{fb}"))
+    elif LLM_CONFIG_PATH.exists():
+        results.append(("llm.yaml", warn_mark, "File exists but failed to parse"))
+    else:
+        results.append(("llm.yaml", "[dim]optional[/dim]",
+                        "Create ~/.applypilot/llm.yaml for per-task model config"))
 
     # --- Tier 3 checks ---
     # Claude Code CLI

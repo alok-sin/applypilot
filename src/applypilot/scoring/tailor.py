@@ -82,6 +82,8 @@ You MAY add 2-3 closely related tools (Kubernetes if Docker, Terraform if AWS, R
 
 ## TAILORING RULES:
 
+If FIT SCORE and MATCHED KEYWORDS are provided, prioritize those keywords when reordering skills and tailoring bullet points.
+
 TITLE: Match the target role. Keep seniority (Senior/Lead/Staff). Drop company suffixes and team names.
 
 SUMMARY: Rewrite from scratch. Lead with the 1-2 skills that matter most for THIS role. Sound like someone who's done this job.
@@ -332,7 +334,7 @@ def judge_tailored_resume(
         )},
     ]
 
-    client = get_client()
+    client = get_client("tailor")
     response = client.chat(messages, max_output_tokens=512)
 
     passed = "VERDICT: PASS" in response.upper()
@@ -377,12 +379,9 @@ def tailor_resume(
         (tailored_text, report, parsed_json) where parsed_json is the last
         successfully parsed structured resume, if any.
     """
-    job_text = (
-        f"TITLE: {job['title']}\n"
-        f"COMPANY: {job['site']}\n"
-        f"LOCATION: {job.get('location', 'N/A')}\n\n"
-        f"DESCRIPTION:\n{(job.get('full_description') or '')[:6000]}"
-    )
+    from applypilot.scoring.scorer import build_job_context
+
+    job_text = build_job_context(job)
 
     report: dict = {
         "attempts": 0, "validator": None, "judge": None,
@@ -391,7 +390,7 @@ def tailor_resume(
     avoid_notes: list[str] = []
     tailored = ""
     last_data: dict | None = None
-    client = get_client()
+    client = get_client("tailor")
     tailor_prompt_base = _build_tailor_prompt(profile)
 
     for attempt in range(max_retries + 1):

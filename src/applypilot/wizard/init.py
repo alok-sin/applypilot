@@ -20,6 +20,7 @@ from rich.prompt import Confirm, Prompt
 from applypilot.config import (
     APP_DIR,
     ENV_PATH,
+    LLM_CONFIG_PATH,
     PROFILE_PATH,
     RESUME_PATH,
     RESUME_PDF_PATH,
@@ -302,13 +303,95 @@ def _setup_ai_features() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Per-task LLM config
+# ---------------------------------------------------------------------------
+
+_LLM_YAML_EXAMPLE = """\
+# Per-task LLM configuration for ApplyPilot.
+# Each task can use a different model/provider.
+# If a task is not listed here, it uses the default.
+# Delete this file to use a single model for all tasks (env-var config).
+
+# Default model used when a task has no override.
+default:
+  model: gemini/gemini-3.0-flash
+
+# Per-task overrides. Valid tasks: discover, enrich, score, tailor, cover.
+tasks:
+  score:
+    model: gemini/gemini-3.0-flash
+    # fallback: gemini/gemini-2.5-flash-preview-04-17
+    # api_key_env: GEMINI_API_KEY   # override which env var to read
+  tailor:
+    model: gemini/gemini-3.0-flash
+    # fallback: gemini/gemini-2.5-flash-preview-04-17
+  cover:
+    model: gemini/gemini-3.0-flash
+  enrich:
+    model: gemini/gemini-3.0-flash
+  discover:
+    model: gemini/gemini-3.0-flash
+
+# Supported provider prefixes:
+#   gemini/    - Google Gemini (GEMINI_API_KEY)
+#   openai/    - OpenAI (OPENAI_API_KEY)
+#   anthropic/ - Anthropic Claude (ANTHROPIC_API_KEY)
+#   lightning/ - Lightning AI (LIGHTNING_API_KEY, auto api_base)
+#   deepseek/  - DeepSeek (DEEPSEEK_API_KEY or LLM_API_KEY)
+#   gemini-cli/ - Local `gemini` CLI backend (no API key needed, free inference)
+#
+# Example: use gemini CLI to score for free (no GEMINI_API_KEY quota consumed):
+#   tasks:
+#     score:
+#       model: gemini-cli/gemini-3.1-pro-preview
+#
+# For custom OpenAI-compatible endpoints, add api_base:
+#   tasks:
+#     score:
+#       model: openai/qwen-plus
+#       api_base: https://dashscope.aliyuncs.com/compatible-mode/v1
+#       api_key_env: DASHSCOPE_API_KEY
+#
+# Cross-provider fallback example:
+# Use Google AI Studio free tier, fall back to Lightning AI on 429s.
+#   tasks:
+#     score:
+#       model: gemini/gemma-4-27b-it
+#       fallback: openai/lightning-ai/gemma-4-27b-it
+#       fallback_api_base: https://lightning.ai/api/v1
+#       fallback_api_key_env: LIGHTNING_API_KEY
+"""
+
+
+def _setup_llm_yaml() -> None:
+    """Offer to create an example llm.yaml for per-task LLM config."""
+    if LLM_CONFIG_PATH.exists():
+        console.print(f"[dim]llm.yaml already exists at {LLM_CONFIG_PATH}[/dim]")
+        return
+
+    console.print(Panel(
+        "[bold]Step 5: Per-Task LLM Config (optional)[/bold]\n"
+        "You can use different AI models for different pipeline stages.\n"
+        "For example, a fast model for scoring and a powerful model for tailoring.",
+        border_style="cyan",
+    ))
+
+    if Confirm.ask("Generate an example llm.yaml?", default=False):
+        LLM_CONFIG_PATH.write_text(_LLM_YAML_EXAMPLE, encoding="utf-8")
+        console.print(f"[green]Created {LLM_CONFIG_PATH}[/green]")
+        console.print("[dim]Edit it to configure different models per task.[/dim]")
+    else:
+        console.print("[dim]Skipped. All tasks will use the same model from .env config.[/dim]")
+
+
+# ---------------------------------------------------------------------------
 # Auto-Apply
 # ---------------------------------------------------------------------------
 
 def _setup_auto_apply() -> None:
     """Configure autonomous job application (requires Claude Code CLI)."""
     console.print(Panel(
-        "[bold]Step 5: Auto-Apply (optional)[/bold]\n"
+        "[bold]Step 6: Auto-Apply (optional)[/bold]\n"
         "ApplyPilot can autonomously fill and submit job applications\n"
         "using Claude Code as the browser agent."
     ))
@@ -382,7 +465,11 @@ def run_wizard() -> None:
     _setup_ai_features()
     console.print()
 
-    # Step 5: Auto-apply (Claude Code detection)
+    # Step 5: Per-task LLM config (optional)
+    _setup_llm_yaml()
+    console.print()
+
+    # Step 6: Auto-apply (Claude Code detection)
     _setup_auto_apply()
     console.print()
 

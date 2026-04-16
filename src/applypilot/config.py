@@ -7,7 +7,7 @@ import shutil
 from pathlib import Path
 
 # User data directory — all user-specific files live here
-APP_DIR = Path(os.environ.get("APPLYPILOT_DIR", Path.home() / ".applypilot"))
+APP_DIR = Path(os.environ.get("APPLYPILOT_DIR", Path.home() / ".applypilot-plus"))
 
 # Core paths
 DB_PATH = APP_DIR / "applypilot.db"
@@ -16,6 +16,7 @@ RESUME_PATH = APP_DIR / "resume.txt"
 RESUME_PDF_PATH = APP_DIR / "resume.pdf"
 SEARCH_CONFIG_PATH = APP_DIR / "searches.yaml"
 ENV_PATH = APP_DIR / ".env"
+LLM_CONFIG_PATH = APP_DIR / "llm.yaml"
 
 # Generated output
 TAILORED_DIR = APP_DIR / "tailored_resumes"

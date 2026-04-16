@@ -546,7 +546,7 @@ def judge_api_responses(api_responses: list[dict]) -> list[dict]:
     if not api_responses:
         return []
 
-    client = get_client()
+    client = get_client("discover")
     relevant: list[dict] = []
 
     for resp in api_responses:
@@ -822,7 +822,7 @@ PAGE HTML:
 
 def ask_llm(prompt: str) -> tuple[str, float, dict]:
     """Send prompt to LLM. Returns (response_text, seconds_taken, metadata)."""
-    client = get_client()
+    client = get_client("discover")
     t0 = time.time()
     text = client.chat([{"role": "user", "content": prompt}], max_output_tokens=4096)
     elapsed = time.time() - t0
@@ -835,21 +835,66 @@ def ask_llm(prompt: str) -> tuple[str, float, dict]:
 
 
 def extract_json(text: str) -> dict:
-    """Extract JSON from LLM response, handling think tags and code fences."""
-    if "<think>" in text:
-        after = text.split("</think>")[-1].strip()
-        if after:
-            text = after
+    """Extract JSON from LLM response, handling reasoning tags and code fences.
+
+    Handles:
+    - <think>...</think> and <thought>...</thought> reasoning blocks
+    - ```json ... ``` and ``` ... ``` code fences
+    - Raw JSON preceded or followed by free-form text (Gemma-style)
+    - Trailing garbage after the JSON object
+    """
+    # Strip reasoning blocks (any case, any variant: think, thinking, thought).
+    text = re.sub(r"<think(?:ing)?>.*?</think(?:ing)?>", "", text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"<thought>.*?</thought>", "", text, flags=re.DOTALL | re.IGNORECASE)
+
+    # Extract from code fence if present.
     if "```json" in text:
-        text = text.split("```json")[1].split("```")[0]
+        text = text.split("```json", 1)[1].split("```", 1)[0]
     elif "```" in text:
-        text = text.split("```")[1].split("```")[0]
+        text = text.split("```", 1)[1].split("```", 1)[0]
+
     text = text.strip()
     text = re.sub(r'\\([^"\\\/bfnrtu])', r'\1', text)
+
+    # Fast path: the whole thing parses as JSON.
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
+
+    # Fallback: find the first balanced {...} object anywhere in the text.
+    # Models like Gemma often emit reasoning prose followed by raw JSON with no fences.
+    start = text.find("{")
+    while start != -1:
+        depth = 0
+        in_str = False
+        esc = False
+        for i in range(start, len(text)):
+            ch = text[i]
+            if esc:
+                esc = False
+                continue
+            if ch == "\\":
+                esc = True
+                continue
+            if ch == '"':
+                in_str = not in_str
+                continue
+            if in_str:
+                continue
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    candidate = text[start : i + 1]
+                    try:
+                        return json.loads(candidate)
+                    except json.JSONDecodeError:
+                        break
+        start = text.find("{", start + 1)
+
+    # Last resort: trim trailing chars until it parses.
     while text.endswith("}") or text.endswith("]"):
         try:
             return json.loads(text)

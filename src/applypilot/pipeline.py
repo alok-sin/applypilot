@@ -166,11 +166,11 @@ def _run_enrich(workers: int = 1, headless: bool = True) -> dict:
         return {"status": f"error: {e}"}
 
 
-def _run_score() -> dict:
+def _run_score(rescore_above: int | None = None) -> dict:
     """Stage: LLM scoring — assign fit scores 1-10."""
     try:
         from applypilot.scoring.scorer import run_scoring
-        run_scoring()
+        run_scoring(rescore_above=rescore_above)
         return {"status": "ok"}
     except Exception as e:
         log.error("Scoring failed: %s", e)
@@ -320,6 +320,7 @@ def _run_stage_streaming(
     validation_mode: str = "normal",
     headless: bool = True,
     site_filter: list[str] | None = None,
+    rescore_above: int | None = None,
 ) -> None:
     """Run a single stage in streaming mode: loop until upstream done + no work.
 
@@ -338,6 +339,8 @@ def _run_stage_streaming(
         kwargs["site_filter"] = site_filter
     if stage == "enrich":
         kwargs["headless"] = headless
+    if stage == "score":
+        kwargs["rescore_above"] = rescore_above
 
     upstream = _UPSTREAM[stage]
 
@@ -387,7 +390,8 @@ def _run_stage_streaming(
 
 def _run_sequential(ordered: list[str], min_score: int, workers: int = 1,
                     validation_mode: str = "normal", headless: bool = True,
-                    site_filter: list[str] | None = None) -> dict:
+                    site_filter: list[str] | None = None,
+                    rescore_above: int | None = None) -> dict:
     """Execute stages one at a time (original behavior)."""
     results: list[dict] = []
     errors: dict[str, str] = {}
@@ -414,6 +418,8 @@ def _run_sequential(ordered: list[str], min_score: int, workers: int = 1,
                 kwargs["site_filter"] = site_filter
             if name == "enrich":
                 kwargs["headless"] = headless
+            if name == "score":
+                kwargs["rescore_above"] = rescore_above
             result = runner(**kwargs)
             elapsed = time.time() - t0
 
@@ -446,7 +452,8 @@ def _run_sequential(ordered: list[str], min_score: int, workers: int = 1,
 
 def _run_streaming(ordered: list[str], min_score: int, workers: int = 1,
                    validation_mode: str = "normal", headless: bool = True,
-                   site_filter: list[str] | None = None) -> dict:
+                   site_filter: list[str] | None = None,
+                   rescore_above: int | None = None) -> dict:
     """Execute stages concurrently with DB as conveyor belt."""
     tracker = _StageTracker()
     stop_event = threading.Event()
@@ -468,7 +475,7 @@ def _run_streaming(ordered: list[str], min_score: int, workers: int = 1,
         start_times[name] = time.time()
         t = threading.Thread(
             target=_run_stage_streaming,
-            args=(name, tracker, stop_event, min_score, workers, validation_mode, headless, site_filter),
+            args=(name, tracker, stop_event, min_score, workers, validation_mode, headless, site_filter, rescore_above),
             name=f"stage-{name}",
             daemon=True,
         )
@@ -518,6 +525,7 @@ def run_pipeline(
     headless: bool = True,
     site_filter: list[str] | None = None,
     validation_mode: str = "normal",
+    rescore_above: int | None = None,
 ) -> dict:
     """Run pipeline stages.
 
@@ -573,12 +581,14 @@ def run_pipeline(
         result = _run_streaming(ordered, min_score, workers=workers,
                                 headless=headless,
                                 validation_mode=validation_mode,
-                                site_filter=site_filter)
+                                site_filter=site_filter,
+                                rescore_above=rescore_above)
     else:
         result = _run_sequential(ordered, min_score, workers=workers,
                                  headless=headless,
                                  validation_mode=validation_mode,
-                                 site_filter=site_filter)
+                                 site_filter=site_filter,
+                                 rescore_above=rescore_above)
 
     # Summary table
     console.print(f"\n{'=' * 70}")

@@ -86,6 +86,8 @@ def _build_cover_letter_prompt(profile: dict) -> str:
 
 STRUCTURE: 3 short paragraphs. Under 250 words. Every sentence must earn its place.
 
+If MATCHED KEYWORDS are provided, weave 2-3 of the most relevant ones naturally into the letter.
+
 PARAGRAPH 1 (2-3 sentences): Open with a specific thing YOU built that solves THEIR problem. Not "I'm excited about this role." Not "This role aligns with my experience." Start with the work.
 
 PARAGRAPH 2 (3-4 sentences): Pick 2 achievements from the resume that are MOST relevant to THIS job. Use numbers. Frame as solving their problem, not listing your accomplishments.{projects_hint}{metrics_hint}
@@ -153,16 +155,13 @@ def generate_cover_letter(
     Returns:
         The cover letter text (best attempt even if validation failed).
     """
-    job_text = (
-        f"TITLE: {job['title']}\n"
-        f"COMPANY: {job['site']}\n"
-        f"LOCATION: {job.get('location', 'N/A')}\n\n"
-        f"DESCRIPTION:\n{(job.get('full_description') or '')[:6000]}"
-    )
+    from applypilot.scoring.scorer import build_job_context
+
+    job_text = build_job_context(job)
 
     avoid_notes: list[str] = []
     letter = ""
-    client = get_client()
+    client = get_client("cover")
     cl_prompt_base = _build_cover_letter_prompt(profile)
 
     for attempt in range(max_retries + 1):

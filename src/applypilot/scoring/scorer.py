@@ -16,27 +16,21 @@ from applypilot.llm import get_client
 
 log = logging.getLogger(__name__)
 
+_THOUGHT_RE = re.compile(r"<thought>.*?</thought>", re.DOTALL | re.IGNORECASE)
+
 
 # ── Scoring Prompt ────────────────────────────────────────────────────────
 
-SCORE_PROMPT = """You are a job fit evaluator. Given a candidate's resume and a job description, score how well the candidate fits the role.
+SCORE_PROMPT = """You are a job fit evaluator. Score how well a candidate fits a role.
 
-SCORING CRITERIA:
-- 9-10: Perfect match. Candidate has direct experience in nearly all required skills and qualifications.
-- 7-8: Strong match. Candidate has most required skills, minor gaps easily bridged.
-- 5-6: Moderate match. Candidate has some relevant skills but missing key requirements.
-- 3-4: Weak match. Significant skill gaps, would need substantial ramp-up.
-- 1-2: Poor match. Completely different field or experience level.
+SCORING SCALE:
+9-10 = Perfect match, 7-8 = Strong, 5-6 = Moderate, 3-4 = Weak, 1-2 = Poor.
 
-IMPORTANT FACTORS:
-- Weight technical skills heavily (programming languages, frameworks, tools)
-- Consider transferable experience (automation, scripting, API work)
-- Factor in the candidate's project experience
-- Be realistic about experience level vs. job requirements (years of experience, seniority)
+Weight technical skills heavily. Consider transferable experience. Be realistic about experience level vs. requirements.
 
-RESPOND IN EXACTLY THIS FORMAT (no other text):
+OUTPUT ONLY these 3 lines — nothing else, no preamble, no analysis:
 SCORE: [1-10]
-KEYWORDS: [comma-separated ATS keywords from the job description that match or could match the candidate]
+KEYWORDS: [comma-separated ATS keywords that match the candidate]
 REASONING: [2-3 sentences explaining the score]"""
 
 
@@ -53,20 +47,70 @@ def _parse_score_response(response: str) -> dict:
     keywords = ""
     reasoning = response
 
-    for line in response.split("\n"):
-        line = line.strip()
-        if line.startswith("SCORE:"):
-            try:
-                score = int(re.search(r"\d+", line).group())
-                score = max(1, min(10, score))
-            except (AttributeError, ValueError):
-                score = 0
-        elif line.startswith("KEYWORDS:"):
-            keywords = line.replace("KEYWORDS:", "").strip()
-        elif line.startswith("REASONING:"):
-            reasoning = line.replace("REASONING:", "").strip()
+    # Strip <thought>...</thought> blocks (emitted by models like Gemma 4)
+    # before parsing — the closing tag may be on the same line as SCORE:
+    clean = _THOUGHT_RE.sub("", response).strip()
+    log.debug("Cleaned LLM response for parsing:\n%s", clean)
+
+    # Use regex on the full text to find the LAST occurrence of each field.
+    # Models like Gemma may echo the prompt, reason at length, then output
+    # the final answer — sometimes without a newline before SCORE:.
+    score_matches = re.findall(r"SCORE:\s*(\d+)", clean)
+    if score_matches:
+        score = max(1, min(10, int(score_matches[-1])))
+
+    kw_matches = re.findall(r"KEYWORDS:\s*(.+)", clean)
+    if kw_matches:
+        keywords = kw_matches[-1].strip()
+
+    reason_matches = re.findall(r"REASONING:\s*(.+)", clean)
+    if reason_matches:
+        reasoning = reason_matches[-1].strip()
 
     return {"score": score, "keywords": keywords, "reasoning": reasoning}
+
+
+def parse_stored_reasoning(job: dict) -> tuple[str, str]:
+    """Extract keywords and reasoning from the stored score_reasoning field.
+
+    Handles both tagged format (``KEYWORDS: ...\nREASONING: ...``) and
+    legacy format (``keywords\nreasoning``).
+
+    Returns:
+        (keywords, reasoning) — either may be empty.
+    """
+    raw = job.get("score_reasoning") or ""
+    # Tagged format
+    kw_match = re.search(r"KEYWORDS:\s*(.+)", raw)
+    re_match = re.search(r"REASONING:\s*(.+)", raw)
+    if kw_match and re_match:
+        return kw_match.group(1).strip(), re_match.group(1).strip()
+    # Legacy format: first line = keywords, rest = reasoning
+    parts = raw.split("\n", 1)
+    return (parts[0].strip(), parts[1].strip() if len(parts) > 1 else "")
+
+
+def build_job_context(job: dict, max_desc_chars: int = 6000) -> str:
+    """Build job context for LLM prompts, enriched with scorer output when available."""
+    header = (
+        f"TITLE: {job['title']}\n"
+        f"COMPANY: {job['site']}\n"
+        f"LOCATION: {job.get('location', 'N/A')}\n"
+    )
+
+    keywords, reasoning = parse_stored_reasoning(job)
+    score = job.get("fit_score")
+
+    if keywords and reasoning and score:
+        return (
+            f"{header}"
+            f"FIT SCORE: {score}/10\n"
+            f"MATCHED KEYWORDS: {keywords}\n"
+            f"FIT ANALYSIS: {reasoning}\n\n"
+            f"DESCRIPTION:\n{(job.get('full_description') or '')[:max_desc_chars]}"
+        )
+
+    return f"{header}\nDESCRIPTION:\n{(job.get('full_description') or '')[:max_desc_chars]}"
 
 
 def score_job(resume_text: str, job: dict) -> dict:
@@ -92,20 +136,26 @@ def score_job(resume_text: str, job: dict) -> dict:
     ]
 
     try:
-        client = get_client()
-        response = client.chat(messages, max_output_tokens=512)
+        client = get_client("score")
+        response = client.chat(messages, max_output_tokens=1024)
         return _parse_score_response(response)
     except Exception as e:
         log.error("LLM error scoring job '%s': %s", job.get("title", "?"), e)
         return {"score": 0, "keywords": "", "reasoning": f"LLM error: {e}"}
 
 
-def run_scoring(limit: int = 0, rescore: bool = False) -> dict:
+def run_scoring(
+    limit: int = 0,
+    rescore: bool = False,
+    rescore_above: int | None = None,
+) -> dict:
     """Score unscored jobs that have full descriptions.
 
     Args:
         limit: Maximum number of jobs to score in this run.
         rescore: If True, re-score all jobs (not just unscored ones).
+        rescore_above: If set, re-score only jobs with fit_score >= this value.
+            Takes precedence over `rescore`.
 
     Returns:
         {"scored": int, "errors": int, "elapsed": float, "distribution": list}
@@ -113,7 +163,19 @@ def run_scoring(limit: int = 0, rescore: bool = False) -> dict:
     resume_text = RESUME_PATH.read_text(encoding="utf-8")
     conn = get_connection()
 
-    if rescore:
+    if rescore_above is not None:
+        query = (
+            "SELECT * FROM jobs WHERE full_description IS NOT NULL "
+            "AND fit_score IS NOT NULL AND fit_score >= ? "
+            "ORDER BY fit_score DESC"
+        )
+        params: list = [rescore_above]
+        if limit > 0:
+            query += " LIMIT ?"
+            params.append(limit)
+        jobs = conn.execute(query, params).fetchall()
+        log.info("Rescoring %d job(s) with fit_score >= %d", len(jobs), rescore_above)
+    elif rescore:
         query = "SELECT * FROM jobs WHERE full_description IS NOT NULL"
         if limit > 0:
             query += f" LIMIT {limit}"
@@ -156,7 +218,7 @@ def run_scoring(limit: int = 0, rescore: bool = False) -> dict:
     for r in results:
         conn.execute(
             "UPDATE jobs SET fit_score = ?, score_reasoning = ?, scored_at = ? WHERE url = ?",
-            (r["score"], f"{r['keywords']}\n{r['reasoning']}", now, r["url"]),
+            (r["score"], f"KEYWORDS: {r['keywords']}\nREASONING: {r['reasoning']}", now, r["url"]),
         )
     conn.commit()
 
