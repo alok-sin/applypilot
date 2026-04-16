@@ -140,6 +140,47 @@ def load_search_config() -> dict:
     return yaml.safe_load(SEARCH_CONFIG_PATH.read_text(encoding="utf-8"))
 
 
+def filter_employers_by_tags(employers: dict, search_cfg: dict | None = None) -> dict:
+    """Filter employer dict by discover_tags from search config.
+
+    - discover_tags absent or empty → return all (no filtering)
+    - Employer has no 'tags' key → always included (backwards compat)
+    - Otherwise: included if any employer tag matches any discover_tag (OR)
+    """
+    import logging
+    log = logging.getLogger(__name__)
+
+    if search_cfg is None:
+        search_cfg = load_search_config()
+
+    wanted = search_cfg.get("discover_tags") or []
+    if not wanted:
+        return employers
+
+    wanted_set = {t.lower() for t in wanted}
+    filtered = {}
+    all_tags: set[str] = set()
+
+    for key, emp in employers.items():
+        emp_tags = emp.get("tags")
+        if emp_tags is None:
+            filtered[key] = emp
+            continue
+        tag_set = {t.lower() for t in emp_tags}
+        all_tags.update(tag_set)
+        if tag_set & wanted_set:
+            filtered[key] = emp
+
+    log.info(
+        "Tag filter: %d/%d employers match discover_tags=%s",
+        len(filtered), len(employers), list(wanted_set),
+    )
+    if not filtered:
+        log.warning("No employers matched tags %s. Available tags: %s", list(wanted_set), sorted(all_tags))
+
+    return filtered
+
+
 def load_sites_config() -> dict:
     """Load sites.yaml configuration (sites list, manual_ats, blocked, etc.)."""
     import yaml

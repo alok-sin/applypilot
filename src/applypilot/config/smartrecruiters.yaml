@@ -7,31 +7,39 @@ employers:
   bosch:
     name: "Bosch"
     slug: "BoschGroup"
+    tags: [tech, global-india]
 
   visa:
     name: "Visa"
     slug: "Visa"
+    tags: [finance, global-india]
 
   servicenow:
     name: "ServiceNow"
     slug: "ServiceNow"
+    tags: [tech, global-india]
 
   accor:
     name: "Accor"
     slug: "Accor"
+    tags: [consumer, global-india]
 
   lvmh_perfumes:
     name: "LVMH Perfumes & Cosmetics"
     slug: "LVMHPerfumesCosmetics"
+    tags: [consumer]
 
   freshworks:
     name: "Freshworks"
     slug: "Freshworks"
+    tags: [tech, india]
 
   asos:
     name: "ASOS"
     slug: "ASOS"
+    tags: [consumer]
 
   saintgobain:
     name: "Saint-Gobain"
     slug: "SaintGobain"
+    tags: [global-india]

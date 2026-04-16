@@ -11,84 +11,98 @@ employers:
     tenant: "td"
     site_id: "TD_Bank_Careers"
     base_url: "https://td.wd3.myworkdayjobs.com"
+    tags: [finance, canada]
 
   cibc:
     name: "CIBC"
     tenant: "cibc"
     site_id: "search"
     base_url: "https://cibc.wd3.myworkdayjobs.com"
+    tags: [finance, canada]
 
   rbc:
     name: "RBC"
     tenant: "rbc"
     site_id: "RBCGLOBAL1"
     base_url: "https://rbc.wd3.myworkdayjobs.com"
+    tags: [finance, canada]
 
   bmo:
     name: "BMO"
     tenant: "bmo"
     site_id: "External"
     base_url: "https://bmo.wd3.myworkdayjobs.com"
+    tags: [finance, canada]
 
   manulife:
     name: "Manulife"
     tenant: "manulife"
     site_id: "MFCJH_Jobs"
     base_url: "https://manulife.wd3.myworkdayjobs.com"
+    tags: [finance, canada]
 
   sunlife:
     name: "Sun Life"
     tenant: "sunlife"
     site_id: "Experienced-Jobs"
     base_url: "https://sunlife.wd3.myworkdayjobs.com"
+    tags: [finance, canada]
 
   desjardins:
     name: "Desjardins"
     tenant: "desjardins"
     site_id: "Desjardins"
     base_url: "https://desjardins.wd10.myworkdayjobs.com"
+    tags: [finance, canada]
 
   intact:
     name: "Intact Financial"
     tenant: "intactfc"
     site_id: "intactfc"
     base_url: "https://intactfc.wd3.myworkdayjobs.com"
+    tags: [finance, canada]
 
   aviva:
     name: "Aviva Canada"
     tenant: "aviva"
     site_id: "External"
     base_url: "https://aviva.wd1.myworkdayjobs.com"
+    tags: [finance, canada]
 
   tmx:
     name: "TMX Group"
     tenant: "tmx"
     site_id: "TMX_Careers"
     base_url: "https://tmx.wd3.myworkdayjobs.com"
+    tags: [finance, canada]
 
   brookfield:
     name: "Brookfield"
     tenant: "brookfield"
     site_id: "brookfield"
     base_url: "https://brookfield.wd5.myworkdayjobs.com"
+    tags: [finance, canada]
 
   fis:
     name: "FIS Global"
     tenant: "fis"
     site_id: "SearchJobs"
     base_url: "https://fis.wd5.myworkdayjobs.com"
+    tags: [finance, global-india]
 
   mastercard:
     name: "Mastercard"
     tenant: "mastercard"
     site_id: "CorporateCareers"
     base_url: "https://mastercard.wd1.myworkdayjobs.com"
+    tags: [finance, global-india]
 
   paypal:
     name: "PayPal"
     tenant: "paypal"
     site_id: "jobs"
     base_url: "https://paypal.wd1.myworkdayjobs.com"
+    tags: [finance, global-india]
 
   # ── Canadian Pension Funds ──────────────────────────────────────────────
 
@@ -97,42 +111,49 @@ employers:
     tenant: "cppib"
     site_id: "cppinvestments"
     base_url: "https://cppib.wd10.myworkdayjobs.com"
+    tags: [finance, canada]
 
   omers:
     name: "OMERS"
     tenant: "omers"
     site_id: "OMERS_External"
     base_url: "https://omers.wd3.myworkdayjobs.com"
+    tags: [finance, canada]
 
   otpp:
     name: "Ontario Teachers"
     tenant: "otppb"
     site_id: "OntarioTeachers_Careers"
     base_url: "https://otppb.wd3.myworkdayjobs.com"
+    tags: [finance, canada]
 
   psp:
     name: "PSP Investments"
     tenant: "investpsp"
     site_id: "psp_careers"
     base_url: "https://investpsp.wd3.myworkdayjobs.com"
+    tags: [finance, canada]
 
   cdpq:
     name: "CDPQ"
     tenant: "cdpq"
     site_id: "CDPQ"
     base_url: "https://cdpq.wd10.myworkdayjobs.com"
+    tags: [finance, canada]
 
   hoopp:
     name: "HOOPP"
     tenant: "hoopp"
     site_id: "HOOPP"
     base_url: "https://hoopp.wd10.myworkdayjobs.com"
+    tags: [finance, canada]
 
   aimco:
     name: "AIMCo"
     tenant: "aimco"
     site_id: "AIMCoCareers"
     base_url: "https://aimco.wd10.myworkdayjobs.com"
+    tags: [finance, canada]
 
   # ── Tech Companies ──────────────────────────────────────────────────────
 
@@ -141,72 +162,84 @@ employers:
     tenant: "bb"
     site_id: "BlackBerry"
     base_url: "https://bb.wd3.myworkdayjobs.com"
+    tags: [tech, canada]
 
   ciena:
     name: "Ciena"
     tenant: "ciena"
     site_id: "Careers"
     base_url: "https://ciena.wd5.myworkdayjobs.com"
+    tags: [tech, canada]
 
   workday:
     name: "Workday"
     tenant: "workday"
     site_id: "Workday"
     base_url: "https://workday.wd5.myworkdayjobs.com"
+    tags: [tech, global-india]
 
   salesforce:
     name: "Salesforce"
     tenant: "salesforce"
     site_id: "External_Career_Site"
     base_url: "https://salesforce.wd12.myworkdayjobs.com"
+    tags: [tech, global-india]
 
   nvidia:
     name: "NVIDIA"
     tenant: "nvidia"
     site_id: "NVIDIAExternalCareerSite"
     base_url: "https://nvidia.wd5.myworkdayjobs.com"
+    tags: [tech, global-india]
 
   netflix:
     name: "Netflix"
     tenant: "netflix"
     site_id: "Netflix"
     base_url: "https://netflix.wd1.myworkdayjobs.com"
+    tags: [tech]
 
   cisco:
     name: "Cisco"
     tenant: "cisco"
     site_id: "Cisco_Careers"
     base_url: "https://cisco.wd5.myworkdayjobs.com"
+    tags: [tech, global-india]
 
   intel:
     name: "Intel"
     tenant: "intel"
     site_id: "External"
     base_url: "https://intel.wd1.myworkdayjobs.com"
+    tags: [tech, global-india]
 
   adobe:
     name: "Adobe"
     tenant: "adobe"
     site_id: "external_experienced"
     base_url: "https://adobe.wd5.myworkdayjobs.com"
+    tags: [tech, global-india]
 
   motorola:
     name: "Motorola Solutions"
     tenant: "motorolasolutions"
     site_id: "Careers"
     base_url: "https://motorolasolutions.wd5.myworkdayjobs.com"
+    tags: [tech, global-india]
 
   thomson_reuters:
     name: "Thomson Reuters"
     tenant: "thomsonreuters"
     site_id: "External_Career_Site"
     base_url: "https://thomsonreuters.wd5.myworkdayjobs.com"
+    tags: [tech, global-india]
 
   moderna:
     name: "Moderna"
     tenant: "modernatx"
     site_id: "M_tx"
     base_url: "https://modernatx.wd1.myworkdayjobs.com"
+    tags: [pharma]
 
   # ── Consulting ──────────────────────────────────────────────────────────
 
@@ -215,12 +248,14 @@ employers:
     tenant: "pwc"
     site_id: "Global_Experienced_Careers"
     base_url: "https://pwc.wd3.myworkdayjobs.com"
+    tags: [finance, global-india]
 
   bdo:
     name: "BDO"
     tenant: "bdo"
     site_id: "BDO"
     base_url: "https://bdo.wd3.myworkdayjobs.com"
+    tags: [finance, canada]
 
   # ── Telecom ─────────────────────────────────────────────────────────────
 
@@ -229,12 +264,14 @@ employers:
     tenant: "telusinternational"
     site_id: "External"
     base_url: "https://telusinternational.wd3.myworkdayjobs.com"
+    tags: [tech, canada]
 
   telus_health:
     name: "TELUS Health"
     tenant: "lifeworks"
     site_id: "External"
     base_url: "https://lifeworks.wd3.myworkdayjobs.com"
+    tags: [tech, canada]
 
   # ── Canadian Corporate ──────────────────────────────────────────────────
 
@@ -243,48 +280,56 @@ employers:
     tenant: "canadiantirecorporation"
     site_id: "Enterprise_External_Careers_Site"
     base_url: "https://canadiantirecorporation.wd3.myworkdayjobs.com"
+    tags: [consumer, canada]
 
   pc_financial:
     name: "PC Financial"
     tenant: "myview"
     site_id: "pc_financial"
     base_url: "https://myview.wd3.myworkdayjobs.com"
+    tags: [finance, canada]
 
   cae:
     name: "CAE"
     tenant: "cae"
     site_id: "career"
     base_url: "https://cae.wd3.myworkdayjobs.com"
+    tags: [tech, canada]
 
   magna:
     name: "Magna International"
     tenant: "magna"
     site_id: "Magna"
     base_url: "https://magna.wd3.myworkdayjobs.com"
+    tags: [tech, canada]
 
   mlse:
     name: "MLSE"
     tenant: "mlse"
     site_id: "MLSE"
     base_url: "https://mlse.wd3.myworkdayjobs.com"
+    tags: [consumer, canada]
 
   olg:
     name: "OLG"
     tenant: "olg"
     site_id: "Careers"
     base_url: "https://olg.wd3.myworkdayjobs.com"
+    tags: [consumer, canada]
 
   enbridge:
     name: "Enbridge"
     tenant: "enbridge"
     site_id: "enbridge_careers"
     base_url: "https://enbridge.wd3.myworkdayjobs.com"
+    tags: [canada]
 
   canadian_solar:
     name: "Canadian Solar"
     tenant: "canadiansolar"
     site_id: "CanadianSolar"
     base_url: "https://canadiansolar.wd5.myworkdayjobs.com"
+    tags: [tech, canada]
 
   # ── US Retail ───────────────────────────────────────────────────────────
 
@@ -293,12 +338,14 @@ employers:
     tenant: "walmart"
     site_id: "WalmartExternal"
     base_url: "https://walmart.wd5.myworkdayjobs.com"
+    tags: [consumer, global-india]
 
   target:
     name: "Target"
     tenant: "target"
     site_id: "targetcareers"
     base_url: "https://target.wd5.myworkdayjobs.com"
+    tags: [consumer, global-india]
 
   # ── Global Finance ──────────────────────────────────────────────────────
 
@@ -307,30 +354,35 @@ employers:
     tenant: "citi"
     site_id: "2"
     base_url: "https://citi.wd5.myworkdayjobs.com"
+    tags: [finance, global-india]
 
   morgan_stanley:
     name: "Morgan Stanley"
     tenant: "ms"
     site_id: "External"
     base_url: "https://ms.wd5.myworkdayjobs.com"
+    tags: [finance, global-india]
 
   marsh_mclennan:
     name: "Marsh McLennan"
     tenant: "mmc"
     site_id: "MMC"
     base_url: "https://mmc.wd1.myworkdayjobs.com"
+    tags: [finance, global-india]
 
   spglobal:
     name: "S&P Global"
     tenant: "spgi"
     site_id: "SPGI_Careers"
     base_url: "https://spgi.wd5.myworkdayjobs.com"
+    tags: [finance, global-india]
 
   blackrock:
     name: "BlackRock"
     tenant: "blackrock"
     site_id: "BlackRock_Professional"
     base_url: "https://blackrock.wd1.myworkdayjobs.com"
+    tags: [finance, global-india]
 
   # ── Pharma / Life Sciences ──────────────────────────────────────────────
 
@@ -339,36 +391,42 @@ employers:
     tenant: "astrazeneca"
     site_id: "Careers"
     base_url: "https://astrazeneca.wd3.myworkdayjobs.com"
+    tags: [pharma, global-india]
 
   sanofi:
     name: "Sanofi"
     tenant: "sanofi"
     site_id: "SanofiCareers"
     base_url: "https://sanofi.wd3.myworkdayjobs.com"
+    tags: [pharma, global-india]
 
   eli_lilly:
     name: "Eli Lilly"
     tenant: "lilly"
     site_id: "LLY"
     base_url: "https://lilly.wd5.myworkdayjobs.com"
+    tags: [pharma, global-india]
 
   merck:
     name: "Merck (MSD)"
     tenant: "msd"
     site_id: "SearchJobs"
     base_url: "https://msd.wd5.myworkdayjobs.com"
+    tags: [pharma, global-india]
 
   novartis:
     name: "Novartis"
     tenant: "novartis"
     site_id: "Novartis_Careers"
     base_url: "https://novartis.wd3.myworkdayjobs.com"
+    tags: [pharma, global-india]
 
   pfizer:
     name: "Pfizer"
     tenant: "pfizer"
     site_id: "PfizerCareers"
     base_url: "https://pfizer.wd1.myworkdayjobs.com"
+    tags: [pharma, global-india]
 
   # ── Industrial / Aerospace / Hardware ───────────────────────────────────
 
@@ -377,24 +435,28 @@ employers:
     tenant: "amat"
     site_id: "External"
     base_url: "https://amat.wd1.myworkdayjobs.com"
+    tags: [tech, global-india]
 
   boeing:
     name: "Boeing"
     tenant: "boeing"
     site_id: "EXTERNAL_CAREERS"
     base_url: "https://boeing.wd1.myworkdayjobs.com"
+    tags: [tech]
 
   dell:
     name: "Dell Technologies"
     tenant: "dell"
     site_id: "External"
     base_url: "https://dell.wd1.myworkdayjobs.com"
+    tags: [tech, global-india]
 
   hp:
     name: "HP Inc"
     tenant: "hp"
     site_id: "ExternalCareerSite"
     base_url: "https://hp.wd5.myworkdayjobs.com"
+    tags: [tech, global-india]
 
   # ── Consumer / Beverages ────────────────────────────────────────────────
 
@@ -403,3 +465,4 @@ employers:
     tenant: "diageo"
     site_id: "Diageo_Careers"
     base_url: "https://diageo.wd3.myworkdayjobs.com"
+    tags: [consumer, global-india]

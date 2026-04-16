@@ -4,546 +4,719 @@
 
 employers:
   # ── Core AI/LLM Companies ────────────────────────────────────────────────
-  
+
   scaleai:
     name: "Scale AI"
-    
+    tags: [tech]
+
   # ── Infrastructure/Data ──────────────────────────────────────────────────
-  
+
   stripe:
     name: "Stripe"
-    
+    tags: [tech, finance]
+
   figma:
     name: "Figma"
-    
+    tags: [tech]
+
   notionhq:
     name: "Notion"
+    tags: [tech]
 
   asana:
     name: "Asana"
-    
+    tags: [tech]
+
   mongodb:
     name: "MongoDB"
-    
+    tags: [tech, global-india]
+
   hashicorp:
     name: "HashiCorp"
-    
+    tags: [tech, global-india]
+
   confluent:
     name: "Confluent"
-    
+    tags: [tech, global-india]
+
   datadog:
     name: "Datadog"
-    
+    tags: [tech]
+
   cloudflare:
     name: "Cloudflare"
-    
+    tags: [tech, global-india]
+
   # ── Fintech ──────────────────────────────────────────────────────────────
-  
+
   robinhood:
     name: "Robinhood"
-    
+    tags: [finance, tech]
+
   coinbase:
     name: "Coinbase"
-    
+    tags: [finance, tech, global-india]
+
   plaid:
     name: "Plaid"
-    
+    tags: [finance, tech]
+
   affirm:
     name: "Affirm"
-    
+    tags: [finance, tech]
+
   upstart:
     name: "Upstart"
-    
+    tags: [finance, tech]
+
   brex:
     name: "Brex"
-    
+    tags: [finance, tech]
+
   mercury:
     name: "Mercury"
-    
+    tags: [finance, tech]
+
   # ── Productivity/Enterprise ──────────────────────────────────────────────
-  
+
   zapier:
     name: "Zapier"
-    
+    tags: [tech]
+
   airtable:
     name: "Airtable"
-    
+    tags: [tech]
+
   miro:
     name: "Miro"
-    
+    tags: [tech]
+
   clickup:
     name: "ClickUp"
-    
+    tags: [tech]
+
   loom:
     name: "Loom"
-    
+    tags: [tech]
+
   retool:
     name: "Retool"
-    
+    tags: [tech]
+
   monday:
     name: "monday.com"
-    
+    tags: [tech]
+
   # ── Security/DevTools ────────────────────────────────────────────────────
-  
+
   sentry:
     name: "Sentry"
-    
+    tags: [tech]
+
   datadog:
     name: "Datadog"
-    
+    tags: [tech]
+
   vercel:
     name: "Vercel"
-    
+    tags: [tech]
+
   auth0:
     name: "Auth0"
-    
+    tags: [tech]
+
   # ── AI/ML Startups (Verified) ────────────────────────────────────────────
-  
+
   sierra:
     name: "Sierra"
-    
+    tags: [tech]
+
   moveworks:
     name: "Moveworks"
-    
+    tags: [tech, global-india]
+
   gong:
     name: "Gong"
-    
+    tags: [tech]
+
   amplitude:
     name: "Amplitude"
-    
+    tags: [tech]
+
   mixpanel:
     name: "Mixpanel"
-    
+    tags: [tech]
+
   # ── Healthcare/Biotech ───────────────────────────────────────────────────
-  
+
   tempus:
     name: "Tempus"
-    
+    tags: [pharma]
+
   guardant:
     name: "Guardant Health"
-    
+    tags: [pharma]
+
   grail:
     name: "GRAIL"
-    
+    tags: [pharma]
+
   freenome:
     name: "Freenome"
-    
+    tags: [pharma]
+
   # ── Enterprise Automation ────────────────────────────────────────────────
-  
+
   uipath:
     name: "UiPath"
-    
+    tags: [tech, global-india]
+
   dataiku:
     name: "Dataiku"
-    
+    tags: [tech]
+
   # ── Content/Media ────────────────────────────────────────────────────────
-  
+
   canva:
     name: "Canva"
+    tags: [tech]
 
   squarespace:
     name: "Squarespace"
-    
+    tags: [tech]
+
   # ── Autonomous Systems ───────────────────────────────────────────────────
-  
+
   zoox:
     name: "Zoox"
-    
+    tags: [tech]
+
   nuro:
     name: "Nuro"
-    
+    tags: [tech]
+
   aurora:
     name: "Aurora Innovation"
-    
+    tags: [tech]
+
   anduril:
     name: "Anduril"
-    
+    tags: [tech]
+
   # ── Additional Verified Companies ────────────────────────────────────────
-  
+
   flexport:
     name: "Flexport"
-    
+    tags: [tech]
+
   ginkgo:
     name: "Ginkgo Bioworks"
-    
+    tags: [pharma]
+
   instacart:
     name: "Instacart"
-    
+    tags: [tech, consumer]
+
   doordash:
     name: "DoorDash"
-    
+    tags: [tech, consumer]
+
   snowflake:
     name: "Snowflake"
-    
+    tags: [tech]
+
   databricks:
     name: "Databricks"
-    
+    tags: [tech, global-india]
+
   palantir:
     name: "Palantir"
-    
+    tags: [tech]
+
   benchling:
     name: "Benchling"
-    
+    tags: [tech, pharma]
+
   recursiv:
     name: "Recursion"
-    
+    tags: [tech, pharma]
+
   23andme:
     name: "23andMe"
-    
+    tags: [pharma]
+
   flatiron:
     name: "Flatiron Health"
-    
+    tags: [pharma]
+
   oscar:
     name: "Oscar Health"
-    
+    tags: [finance]
+
   lemonade:
     name: "Lemonade"
-    
+    tags: [finance]
+
   root:
     name: "Root Insurance"
-    
+    tags: [finance]
+
   hippo:
     name: "Hippo Insurance"
-    
+    tags: [finance]
+
   nextinsurance:
     name: "Next Insurance"
-    
+    tags: [finance]
+
   coalition:
     name: "Coalition"
-    
+    tags: [finance]
+
   "23andme":
     name: "23andMe"
-    
+    tags: [pharma]
+
   determinedai:
     name: "Determined AI"
-    
+    tags: [tech]
+
   bananaml:
     name: "Banana ML"
-    
+    tags: [tech]
+
   baseten:
     name: "Baseten"
-    
+    tags: [tech]
+
   replicate:
     name: "Replicate"
-    
+    tags: [tech]
+
   synthesia:
     name: "Synthesia"
-    
+    tags: [tech]
+
   runway:
     name: "Runway"
-    
+    tags: [tech]
+
   stability:
     name: "Stability AI"
-    
+    tags: [tech]
+
   jasper:
     name: "Jasper"
-    
+    tags: [tech]
+
   writer:
     name: "Writer"
-    
+    tags: [tech]
+
   copyai:
     name: "Copy.ai"
-    
+    tags: [tech]
+
   ada:
     name: "Ada"
-    
+    tags: [tech, canada]
+
   kustomer:
     name: "Kustomer"
-    
+    tags: [tech]
+
   cognigy:
     name: "Cognigy"
-    
+    tags: [tech]
+
   forethought:
     name: "Forethought"
-    
+    tags: [tech]
+
   koreai:
     name: "Kore.ai"
-    
+    tags: [tech, india]
+
   bigpanda:
     name: "BigPanda"
-    
+    tags: [tech]
+
   observe:
     name: "Observe"
-    
+    tags: [tech]
+
   cresta:
     name: "Cresta"
-    
+    tags: [tech]
+
   darktrace:
     name: "Darktrace"
-    
+    tags: [tech]
+
   abnormalsecurity:
     name: "Abnormal Security"
-    
+    tags: [tech]
+
   perimeterx:
     name: "PerimeterX"
-    
+    tags: [tech]
+
   vadesecure:
     name: "Vade Secure"
-    
+    tags: [tech]
+
   clearbit:
     name: "Clearbit"
-    
+    tags: [tech]
+
   crunchbase:
     name: "Crunchbase"
-    
+    tags: [tech]
+
   zoominfo:
     name: "ZoomInfo"
-    
+    tags: [tech, global-india]
+
   outreach:
     name: "Outreach"
-    
+    tags: [tech]
+
   salesloft:
     name: "SalesLoft"
-    
+    tags: [tech]
+
   apolloio:
     name: "Apollo.io"
-    
+    tags: [tech]
+
   chorusai:
     name: "Chorus.ai"
-    
+    tags: [tech]
+
   workato:
     name: "Workato"
-    
+    tags: [tech, global-india]
+
   n8n:
     name: "n8n"
-    
+    tags: [tech]
+
   make:
     name: "Make"
-    
+    tags: [tech]
+
   workfusion:
     name: "WorkFusion"
-    
+    tags: [tech]
+
   blueprism:
     name: "Blue Prism"
-    
+    tags: [tech]
+
   automationanywhere:
     name: "Automation Anywhere"
-    
+    tags: [tech, india]
+
   instabase:
     name: "Instabase"
-    
+    tags: [tech, global-india]
+
   hyperscience:
     name: "Hyperscience"
-    
+    tags: [tech]
+
   veritone:
     name: "Veritone"
-    
+    tags: [tech]
+
   alteryx:
     name: "Alteryx"
-    
+    tags: [tech, global-india]
+
   domino:
     name: "Domino Data Lab"
-    
+    tags: [tech]
+
   neptuneai:
     name: "Neptune.ai"
-    
+    tags: [tech]
+
   clearml:
     name: "ClearML"
-    
+    tags: [tech]
+
   launchdarkly:
     name: "LaunchDarkly"
-    
+    tags: [tech]
+
   weave:
     name: "Weave"
-    
+    tags: [tech]
+
   wayve:
     name: "Wayve"
-    
+    tags: [tech]
+
   appliedintuition:
     name: "Applied Intuition"
-    
+    tags: [tech]
+
   shieldai:
     name: "Shield AI"
-    
+    tags: [tech]
+
   samsara:
     name: "Samsara"
-    
+    tags: [tech, global-india]
+
   astranis:
     name: "Astranis"
-    
+    tags: [tech]
+
   planetlabs:
     name: "Planet Labs"
-    
+    tags: [tech]
+
   pathai:
     name: "PathAI"
-    
+    tags: [pharma]
+
   paige:
     name: "Paige"
-    
+    tags: [pharma]
+
   insitro:
     name: "Insitro"
-    
+    tags: [pharma]
+
   zebra:
     name: "Zebra Medical Vision"
-    
+    tags: [pharma]
+
   aidoc:
     name: "Aidoc"
-    
+    tags: [pharma]
+
   vizai:
     name: "Viz.ai"
-    
+    tags: [pharma]
+
   infermedica:
     name: "Infermedica"
-    
+    tags: [pharma]
+
   buoyhealth:
     name: "Buoy Health"
-    
+    tags: [pharma]
+
   khealth:
     name: "K Health"
-    
+    tags: [pharma]
+
   adahealth:
     name: "Ada Health"
-    
+    tags: [pharma]
+
   babylonhealth:
     name: "Babylon Health"
-    
+    tags: [pharma]
+
   veracyte:
     name: "Veracyte"
-    
+    tags: [pharma]
+
   foundationmedicine:
     name: "Foundation Medicine"
-    
+    tags: [pharma]
+
   klarna:
     name: "Klarna"
-    
+    tags: [finance, tech]
+
   metromile:
     name: "Metromile"
-    
+    tags: [finance]
+
   deserve:
     name: "Deserve"
-    
+    tags: [finance, tech, india]
+
   navi:
     name: "Navi"
+    tags: [finance, india]
 
   # ── Added: Global tech with India offices ───────────────────────────────
 
   okta:
     name: "Okta"
+    tags: [tech, global-india]
 
   roblox:
     name: "Roblox"
+    tags: [tech]
 
   adyen:
     name: "Adyen"
+    tags: [finance, tech]
 
   airbnb:
     name: "Airbnb"
+    tags: [tech]
 
   sofi:
     name: "SoFi"
+    tags: [finance, tech]
 
   elastic:
     name: "Elastic"
+    tags: [tech, global-india]
 
   intercom:
     name: "Intercom"
+    tags: [tech]
 
   gitlab:
     name: "GitLab"
+    tags: [tech]
 
   fivetran:
     name: "Fivetran"
+    tags: [tech, global-india]
 
   celonis:
     name: "Celonis"
+    tags: [tech]
 
   clickhouse:
     name: "ClickHouse"
+    tags: [tech]
 
   zetaglobal:
     name: "Zeta Global"
+    tags: [tech, global-india]
 
   reddit:
     name: "Reddit"
+    tags: [tech]
 
   pinterest:
     name: "Pinterest"
+    tags: [tech]
 
   lyft:
     name: "Lyft"
+    tags: [tech]
 
   twilio:
     name: "Twilio"
+    tags: [tech, global-india]
 
   dropbox:
     name: "Dropbox"
+    tags: [tech]
 
   nubank:
     name: "Nubank"
+    tags: [finance, tech]
 
   duolingo:
     name: "Duolingo"
+    tags: [tech]
 
   chime:
     name: "Chime"
+    tags: [finance, tech]
 
   gusto:
     name: "Gusto"
+    tags: [tech]
 
   discord:
     name: "Discord"
+    tags: [tech]
 
   checkr:
     name: "Checkr"
+    tags: [tech]
 
   newrelic:
     name: "New Relic"
+    tags: [tech, global-india]
 
   webflow:
     name: "Webflow"
+    tags: [tech]
 
   qualtrics:
     name: "Qualtrics"
+    tags: [tech, global-india]
 
   pagerduty:
     name: "PagerDuty"
+    tags: [tech]
 
   temporaltechnologies:
     name: "Temporal Technologies"
+    tags: [tech]
 
   sumologic:
     name: "Sumo Logic"
+    tags: [tech, global-india]
 
   khanacademy:
     name: "Khan Academy"
+    tags: [tech]
 
   starburst:
     name: "Starburst"
+    tags: [tech]
 
   mattermost:
     name: "Mattermost"
+    tags: [tech]
 
   calendly:
     name: "Calendly"
+    tags: [tech]
 
   typeform:
     name: "Typeform"
+    tags: [tech]
 
   circleci:
     name: "CircleCI"
+    tags: [tech]
 
   coursera:
     name: "Coursera"
+    tags: [tech, global-india]
 
   # ── Added: Indian startups / scaleups ───────────────────────────────────
 
   postman:
     name: "Postman"
+    tags: [tech, india]
 
   slice:
     name: "Slice"
+    tags: [tech, india]
 
   zenoti:
     name: "Zenoti"
+    tags: [tech, india]
 
   miqdigital:
     name: "MiQ Digital"
+    tags: [tech, india]
 
   phonepe:
     name: "PhonePe"
+    tags: [finance, india]
 
   druva:
     name: "Druva"
+    tags: [tech, india]
 
   groww:
     name: "Groww"
+    tags: [finance, india]

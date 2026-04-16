@@ -259,7 +259,9 @@ def search_all(
 
     Returns (new_jobs_count, existing_jobs_count).
     """
+    from applypilot import config as _cfg
     employers = _employers_override if _employers_override else load_employers()
+    employers = _cfg.filter_employers_by_tags(employers)
     if not employers:
         log.warning("No Greenhouse employers configured")
         return 0, 0

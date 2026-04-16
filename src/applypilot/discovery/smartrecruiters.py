@@ -276,7 +276,9 @@ def search_all(
     _employers_override: dict | None = None,
 ) -> tuple[int, int]:
     """Search all configured SmartRecruiters employers. Returns (new, existing)."""
+    from applypilot import config as _cfg
     employers = _employers_override if _employers_override else load_employers()
+    employers = _cfg.filter_employers_by_tags(employers)
     if not employers:
         log.warning("No SmartRecruiters employers configured")
         return 0, 0

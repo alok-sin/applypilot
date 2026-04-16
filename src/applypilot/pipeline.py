@@ -111,60 +111,95 @@ def _run_discover(workers: int = 1, site_filter: list[str] | None = None) -> dic
             stats["smartrecruiters"] = "skipped (site-filter)"
         return stats
 
+    # Backend gating: if discover_backends is set, only run listed backends
+    from applypilot.config import load_search_config
+    search_cfg = load_search_config()
+    allowed_backends = search_cfg.get("discover_backends") or []
+    if allowed_backends:
+        allowed_set = {b.strip().lower() for b in allowed_backends}
+        valid_names = {"jobspy", "workday", "greenhouse", "smartrecruiters", "smartextract"}
+        invalid = allowed_set - valid_names
+        if invalid:
+            log.warning("Unknown discover_backends: %s (valid: %s)", sorted(invalid), sorted(valid_names))
+            allowed_set -= invalid
+        log.info("discover_backends filter active: %s", sorted(allowed_set))
+    else:
+        allowed_set = None  # None means run all
+
+    def _backend_enabled(name: str) -> bool:
+        if allowed_set is None:
+            return True
+        return name in allowed_set
+
     # JobSpy
-    console.print("  [cyan]JobSpy full crawl...[/cyan]")
-    try:
-        from applypilot.discovery.jobspy import run_discovery
-        run_discovery()
-        stats["jobspy"] = "ok"
-    except Exception as e:
-        log.error("JobSpy crawl failed: %s", e)
-        console.print(f"  [red]JobSpy error:[/red] {e}")
-        stats["jobspy"] = f"error: {e}"
+    if _backend_enabled("jobspy"):
+        console.print("  [cyan]JobSpy full crawl...[/cyan]")
+        try:
+            from applypilot.discovery.jobspy import run_discovery
+            run_discovery()
+            stats["jobspy"] = "ok"
+        except Exception as e:
+            log.error("JobSpy crawl failed: %s", e)
+            console.print(f"  [red]JobSpy error:[/red] {e}")
+            stats["jobspy"] = f"error: {e}"
+    else:
+        stats["jobspy"] = "skipped (not in discover_backends)"
 
     # Workday corporate scraper
-    console.print("  [cyan]Workday corporate scraper...[/cyan]")
-    try:
-        from applypilot.discovery.workday import run_workday_discovery
-        run_workday_discovery(workers=workers)
-        stats["workday"] = "ok"
-    except Exception as e:
-        log.error("Workday scraper failed: %s", e)
-        console.print(f"  [red]Workday error:[/red] {e}")
-        stats["workday"] = f"error: {e}"
+    if _backend_enabled("workday"):
+        console.print("  [cyan]Workday corporate scraper...[/cyan]")
+        try:
+            from applypilot.discovery.workday import run_workday_discovery
+            run_workday_discovery(workers=workers)
+            stats["workday"] = "ok"
+        except Exception as e:
+            log.error("Workday scraper failed: %s", e)
+            console.print(f"  [red]Workday error:[/red] {e}")
+            stats["workday"] = f"error: {e}"
+    else:
+        stats["workday"] = "skipped (not in discover_backends)"
 
     # Smart extract
-    console.print("  [cyan]Smart extract (AI-powered scraping)...[/cyan]")
-    try:
-        from applypilot.discovery.smartextract import run_smart_extract
-        run_smart_extract(workers=workers)
-        stats["smartextract"] = "ok"
-    except Exception as e:
-        log.error("Smart extract failed: %s", e)
-        console.print(f"  [red]Smart extract error:[/red] {e}")
-        stats["smartextract"] = f"error: {e}"
+    if _backend_enabled("smartextract"):
+        console.print("  [cyan]Smart extract (AI-powered scraping)...[/cyan]")
+        try:
+            from applypilot.discovery.smartextract import run_smart_extract
+            run_smart_extract(workers=workers)
+            stats["smartextract"] = "ok"
+        except Exception as e:
+            log.error("Smart extract failed: %s", e)
+            console.print(f"  [red]Smart extract error:[/red] {e}")
+            stats["smartextract"] = f"error: {e}"
+    else:
+        stats["smartextract"] = "skipped (not in discover_backends)"
 
     # Greenhouse ATS scraper
-    console.print("  [cyan]Greenhouse ATS scraper (AI startups)...[/cyan]")
-    try:
-        from applypilot.discovery.greenhouse import search_all
-        new, existing = search_all("", workers=workers)
-        stats["greenhouse"] = f"ok ({new} new, {existing} existing)"
-    except Exception as e:
-        log.error("Greenhouse scraper failed: %s", e)
-        console.print(f"  [red]Greenhouse error:[/red] {e}")
-        stats["greenhouse"] = f"error: {e}"
+    if _backend_enabled("greenhouse"):
+        console.print("  [cyan]Greenhouse ATS scraper (AI startups)...[/cyan]")
+        try:
+            from applypilot.discovery.greenhouse import search_all
+            new, existing = search_all("", workers=workers)
+            stats["greenhouse"] = f"ok ({new} new, {existing} existing)"
+        except Exception as e:
+            log.error("Greenhouse scraper failed: %s", e)
+            console.print(f"  [red]Greenhouse error:[/red] {e}")
+            stats["greenhouse"] = f"error: {e}"
+    else:
+        stats["greenhouse"] = "skipped (not in discover_backends)"
 
     # SmartRecruiters ATS scraper
-    console.print("  [cyan]SmartRecruiters ATS scraper (Bosch, Visa, ServiceNow, ...)...[/cyan]")
-    try:
-        from applypilot.discovery.smartrecruiters import search_all as sr_search_all
-        new, existing = sr_search_all("", workers=workers)
-        stats["smartrecruiters"] = f"ok ({new} new, {existing} existing)"
-    except Exception as e:
-        log.error("SmartRecruiters scraper failed: %s", e)
-        console.print(f"  [red]SmartRecruiters error:[/red] {e}")
-        stats["smartrecruiters"] = f"error: {e}"
+    if _backend_enabled("smartrecruiters"):
+        console.print("  [cyan]SmartRecruiters ATS scraper (Bosch, Visa, ServiceNow, ...)...[/cyan]")
+        try:
+            from applypilot.discovery.smartrecruiters import search_all as sr_search_all
+            new, existing = sr_search_all("", workers=workers)
+            stats["smartrecruiters"] = f"ok ({new} new, {existing} existing)"
+        except Exception as e:
+            log.error("SmartRecruiters scraper failed: %s", e)
+            console.print(f"  [red]SmartRecruiters error:[/red] {e}")
+            stats["smartrecruiters"] = f"error: {e}"
+    else:
+        stats["smartrecruiters"] = "skipped (not in discover_backends)"
 
     return stats
 

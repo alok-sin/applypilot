@@ -489,11 +489,12 @@ def run_workday_discovery(employers: dict | None = None, workers: int = 1) -> di
     if employers is None:
         employers = load_employers()
 
+    search_cfg = config.load_search_config()
+    employers = config.filter_employers_by_tags(employers, search_cfg)
+
     if not employers:
         log.warning("No employers configured. Create config/employers.yaml.")
         return {"found": 0, "new": 0, "existing": 0, "queries": 0}
-
-    search_cfg = config.load_search_config()
     queries_cfg = search_cfg.get("queries", [])
     accept_locs, reject_locs = _load_location_filter(search_cfg)
 
