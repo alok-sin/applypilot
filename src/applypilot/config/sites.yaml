@@ -183,3 +183,29 @@ sites:
   - name: "Otta"
     url: "https://otta.com/jobs/all?title=software+engineer&remote=true"
     type: search
+
+  # ── HTML-only company career portals (handled by smartextract) ───────
+
+  - name: "DocuSign Careers"
+    url: "https://hubcareers-docusign.icims.com/jobs/search?ss=1&searchKeyword={query_encoded}"
+    type: search
+
+  - name: "Uber Careers"
+    url: "https://www.uber.com/global/en/careers/list/?query={query_encoded}"
+    type: search
+
+  - name: "PharmEasy"
+    url: "https://pharmeasy.in/careers"
+    type: static
+
+  - name: "Khatabook"
+    url: "https://khatabook.com/careers"
+    type: static
+
+  - name: "Piramal Finance"
+    url: "https://www.piramalfinance.com/careers"
+    type: static
+
+  - name: "PriceLabs"
+    url: "https://pricelabs.freshteam.com/jobs"
+    type: static

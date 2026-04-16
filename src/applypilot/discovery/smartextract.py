@@ -118,6 +118,9 @@ def _store_jobs_filtered(
         except sqlite3.IntegrityError:
             existing += 1
 
+        if (new + existing) % 50 == 0:
+            conn.commit()
+
     if filtered:
         log.info("Filtered %d jobs (wrong location)", filtered)
     conn.commit()

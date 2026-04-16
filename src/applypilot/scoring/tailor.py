@@ -580,23 +580,22 @@ def run_tailoring(min_score: int = 7, limit: int = 20,
             result["title"][:40],
         )
 
-    # Persist to DB: increment attempt counter for ALL, save path only for approved
-    now = datetime.now(timezone.utc).isoformat()
-    _success_statuses = {"approved", "approved_with_judge_warning"}
-    for r in results:
-        if r["status"] in _success_statuses:
+        # Persist immediately so work survives if the process is killed
+        now = datetime.now(timezone.utc).isoformat()
+        _success_statuses = {"approved", "approved_with_judge_warning"}
+        if result["status"] in _success_statuses:
             conn.execute(
                 "UPDATE jobs SET tailored_resume_path=?, tailored_at=?, "
                 "tailored_resume_json_path=?, "
                 "tailor_attempts=COALESCE(tailor_attempts,0)+1 WHERE url=?",
-                (r["path"], now, r["json_path"], r["url"]),
+                (result["path"], now, result["json_path"], result["url"]),
             )
         else:
             conn.execute(
                 "UPDATE jobs SET tailor_attempts=COALESCE(tailor_attempts,0)+1 WHERE url=?",
-                (r["url"],),
+                (result["url"],),
             )
-    conn.commit()
+        conn.commit()
 
     elapsed = time.time() - t0
     log.info(

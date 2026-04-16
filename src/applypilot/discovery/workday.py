@@ -336,6 +336,9 @@ def store_results(conn: sqlite3.Connection, jobs: list[dict], employers: dict) -
         except sqlite3.IntegrityError:
             existing += 1
 
+        if (new + existing) % 50 == 0:
+            conn.commit()
+
     conn.commit()
     return new, existing
 

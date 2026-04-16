@@ -1,0 +1,37 @@
+# SmartRecruiters employer registry for ApplyPilot
+# API: https://api.smartrecruiters.com/v1/companies/{slug}/postings
+# Find your employer's slug at: https://careers.smartrecruiters.com/{slug}
+
+employers:
+
+  bosch:
+    name: "Bosch"
+    slug: "BoschGroup"
+
+  visa:
+    name: "Visa"
+    slug: "Visa"
+
+  servicenow:
+    name: "ServiceNow"
+    slug: "ServiceNow"
+
+  accor:
+    name: "Accor"
+    slug: "Accor"
+
+  lvmh_perfumes:
+    name: "LVMH Perfumes & Cosmetics"
+    slug: "LVMHPerfumesCosmetics"
+
+  freshworks:
+    name: "Freshworks"
+    slug: "Freshworks"
+
+  asos:
+    name: "ASOS"
+    slug: "ASOS"
+
+  saintgobain:
+    name: "Saint-Gobain"
+    slug: "SaintGobain"

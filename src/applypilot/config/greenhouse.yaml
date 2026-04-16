@@ -16,9 +16,9 @@ employers:
   figma:
     name: "Figma"
     
-notionhq:
-  name: "Notion"
-    
+  notionhq:
+    name: "Notion"
+
   asana:
     name: "Asana"
     
@@ -140,10 +140,7 @@ notionhq:
   
   canva:
     name: "Canva"
-    
-  docusign:
-    name: "DocuSign"
-    
+
   squarespace:
     name: "Squarespace"
     
@@ -417,3 +414,136 @@ notionhq:
     
   navi:
     name: "Navi"
+
+  # ── Added: Global tech with India offices ───────────────────────────────
+
+  okta:
+    name: "Okta"
+
+  roblox:
+    name: "Roblox"
+
+  adyen:
+    name: "Adyen"
+
+  airbnb:
+    name: "Airbnb"
+
+  sofi:
+    name: "SoFi"
+
+  elastic:
+    name: "Elastic"
+
+  intercom:
+    name: "Intercom"
+
+  gitlab:
+    name: "GitLab"
+
+  fivetran:
+    name: "Fivetran"
+
+  celonis:
+    name: "Celonis"
+
+  clickhouse:
+    name: "ClickHouse"
+
+  zetaglobal:
+    name: "Zeta Global"
+
+  reddit:
+    name: "Reddit"
+
+  pinterest:
+    name: "Pinterest"
+
+  lyft:
+    name: "Lyft"
+
+  twilio:
+    name: "Twilio"
+
+  dropbox:
+    name: "Dropbox"
+
+  nubank:
+    name: "Nubank"
+
+  duolingo:
+    name: "Duolingo"
+
+  chime:
+    name: "Chime"
+
+  gusto:
+    name: "Gusto"
+
+  discord:
+    name: "Discord"
+
+  checkr:
+    name: "Checkr"
+
+  newrelic:
+    name: "New Relic"
+
+  webflow:
+    name: "Webflow"
+
+  qualtrics:
+    name: "Qualtrics"
+
+  pagerduty:
+    name: "PagerDuty"
+
+  temporaltechnologies:
+    name: "Temporal Technologies"
+
+  sumologic:
+    name: "Sumo Logic"
+
+  khanacademy:
+    name: "Khan Academy"
+
+  starburst:
+    name: "Starburst"
+
+  mattermost:
+    name: "Mattermost"
+
+  calendly:
+    name: "Calendly"
+
+  typeform:
+    name: "Typeform"
+
+  circleci:
+    name: "CircleCI"
+
+  coursera:
+    name: "Coursera"
+
+  # ── Added: Indian startups / scaleups ───────────────────────────────────
+
+  postman:
+    name: "Postman"
+
+  slice:
+    name: "Slice"
+
+  zenoti:
+    name: "Zenoti"
+
+  miqdigital:
+    name: "MiQ Digital"
+
+  phonepe:
+    name: "PhonePe"
+
+  druva:
+    name: "Druva"
+
+  groww:
+    name: "Groww"

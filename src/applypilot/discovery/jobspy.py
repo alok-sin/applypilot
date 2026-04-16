@@ -178,6 +178,9 @@ def store_jobspy_results(conn: sqlite3.Connection, df, source_label: str) -> tup
         except sqlite3.IntegrityError:
             existing += 1
 
+        if (new + existing) % 50 == 0:
+            conn.commit()
+
     conn.commit()
     return new, existing
 

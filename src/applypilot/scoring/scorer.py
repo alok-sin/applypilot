@@ -197,6 +197,7 @@ def run_scoring(
     completed = 0
     errors = 0
     results: list[dict] = []
+    now = datetime.now(timezone.utc).isoformat()
 
     for job in jobs:
         result = score_job(resume_text, job)
@@ -213,14 +214,11 @@ def run_scoring(
             completed, len(jobs), result["score"], job.get("title", "?")[:60],
         )
 
-    # Write scores to DB
-    now = datetime.now(timezone.utc).isoformat()
-    for r in results:
         conn.execute(
             "UPDATE jobs SET fit_score = ?, score_reasoning = ?, scored_at = ? WHERE url = ?",
-            (r["score"], f"KEYWORDS: {r['keywords']}\nREASONING: {r['reasoning']}", now, r["url"]),
+            (result["score"], f"KEYWORDS: {result['keywords']}\nREASONING: {result['reasoning']}", now, result["url"]),
         )
-    conn.commit()
+        conn.commit()
 
     elapsed = time.time() - t0
     log.info("Done: %d scored in %.1fs (%.1f jobs/sec)", len(results), elapsed, len(results) / elapsed if elapsed > 0 else 0)

@@ -337,6 +337,9 @@ def _store_jobs(jobs: list[dict]) -> tuple[int, int]:
         except sqlite3.IntegrityError:
             existing += 1
 
+        if (new + existing) % 50 == 0:
+            conn.commit()
+
     conn.commit()
     return new, existing
 

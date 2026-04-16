@@ -61,7 +61,7 @@ _UPSTREAM: dict[str, str | None] = {
 
 def _run_discover(workers: int = 1, site_filter: list[str] | None = None) -> dict:
     """Stage: Job discovery — JobSpy, Workday, and smart-extract scrapers."""
-    stats: dict = {"jobspy": None, "workday": None, "smartextract": None, "greenhouse": None}
+    stats: dict = {"jobspy": None, "workday": None, "smartextract": None, "greenhouse": None, "smartrecruiters": None}
 
     if site_filter:
         filters = [s.strip().lower() for s in site_filter if s and s.strip()]
@@ -71,6 +71,7 @@ def _run_discover(workers: int = 1, site_filter: list[str] | None = None) -> dic
                 "workday": "skipped (site-filter)",
                 "smartextract": "error: empty site-filter",
                 "greenhouse": "skipped (site-filter)",
+                "smartrecruiters": "skipped (site-filter)",
             }
 
         console.print(f"  [cyan]Smart extract (filtered sites): {', '.join(site_filter)}[/cyan]")
@@ -99,6 +100,7 @@ def _run_discover(workers: int = 1, site_filter: list[str] | None = None) -> dic
             stats["workday"] = "skipped (site-filter)"
             stats["smartextract"] = "ok"
             stats["greenhouse"] = "skipped (site-filter)"
+            stats["smartrecruiters"] = "skipped (site-filter)"
         except Exception as e:
             log.error("Smart extract (filtered) failed: %s", e)
             console.print(f"  [red]Smart extract error:[/red] {e}")
@@ -106,6 +108,7 @@ def _run_discover(workers: int = 1, site_filter: list[str] | None = None) -> dic
             stats["workday"] = "skipped (site-filter)"
             stats["smartextract"] = f"error: {e}"
             stats["greenhouse"] = "skipped (site-filter)"
+            stats["smartrecruiters"] = "skipped (site-filter)"
         return stats
 
     # JobSpy
@@ -151,6 +154,17 @@ def _run_discover(workers: int = 1, site_filter: list[str] | None = None) -> dic
         log.error("Greenhouse scraper failed: %s", e)
         console.print(f"  [red]Greenhouse error:[/red] {e}")
         stats["greenhouse"] = f"error: {e}"
+
+    # SmartRecruiters ATS scraper
+    console.print("  [cyan]SmartRecruiters ATS scraper (Bosch, Visa, ServiceNow, ...)...[/cyan]")
+    try:
+        from applypilot.discovery.smartrecruiters import search_all as sr_search_all
+        new, existing = sr_search_all("", workers=workers)
+        stats["smartrecruiters"] = f"ok ({new} new, {existing} existing)"
+    except Exception as e:
+        log.error("SmartRecruiters scraper failed: %s", e)
+        console.print(f"  [red]SmartRecruiters error:[/red] {e}")
+        stats["smartrecruiters"] = f"error: {e}"
 
     return stats
 

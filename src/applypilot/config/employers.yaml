@@ -208,24 +208,6 @@ employers:
     site_id: "M_tx"
     base_url: "https://modernatx.wd1.myworkdayjobs.com"
 
-  servicenow:
-    name: "ServiceNow"
-    tenant: "servicenow"
-    site_id: "ServiceNowCareers"
-    base_url: "https://servicenow.wd1.myworkdayjobs.com"
-
-  docusign:
-    name: "DocuSign"
-    tenant: "docusign"
-    site_id: "External"
-    base_url: "https://docusign.wd5.myworkdayjobs.com"
-
-  uber:
-    name: "Uber"
-    tenant: "uber"
-    site_id: "uberCareers"
-    base_url: "https://uber.wd5.myworkdayjobs.com"
-
   # ── Consulting ──────────────────────────────────────────────────────────
 
   pwc:
@@ -303,3 +285,121 @@ employers:
     tenant: "canadiansolar"
     site_id: "CanadianSolar"
     base_url: "https://canadiansolar.wd5.myworkdayjobs.com"
+
+  # ── US Retail ───────────────────────────────────────────────────────────
+
+  walmart:
+    name: "Walmart"
+    tenant: "walmart"
+    site_id: "WalmartExternal"
+    base_url: "https://walmart.wd5.myworkdayjobs.com"
+
+  target:
+    name: "Target"
+    tenant: "target"
+    site_id: "targetcareers"
+    base_url: "https://target.wd5.myworkdayjobs.com"
+
+  # ── Global Finance ──────────────────────────────────────────────────────
+
+  citi:
+    name: "Citi"
+    tenant: "citi"
+    site_id: "2"
+    base_url: "https://citi.wd5.myworkdayjobs.com"
+
+  morgan_stanley:
+    name: "Morgan Stanley"
+    tenant: "ms"
+    site_id: "External"
+    base_url: "https://ms.wd5.myworkdayjobs.com"
+
+  marsh_mclennan:
+    name: "Marsh McLennan"
+    tenant: "mmc"
+    site_id: "MMC"
+    base_url: "https://mmc.wd1.myworkdayjobs.com"
+
+  spglobal:
+    name: "S&P Global"
+    tenant: "spgi"
+    site_id: "SPGI_Careers"
+    base_url: "https://spgi.wd5.myworkdayjobs.com"
+
+  blackrock:
+    name: "BlackRock"
+    tenant: "blackrock"
+    site_id: "BlackRock_Professional"
+    base_url: "https://blackrock.wd1.myworkdayjobs.com"
+
+  # ── Pharma / Life Sciences ──────────────────────────────────────────────
+
+  astrazeneca:
+    name: "AstraZeneca"
+    tenant: "astrazeneca"
+    site_id: "Careers"
+    base_url: "https://astrazeneca.wd3.myworkdayjobs.com"
+
+  sanofi:
+    name: "Sanofi"
+    tenant: "sanofi"
+    site_id: "SanofiCareers"
+    base_url: "https://sanofi.wd3.myworkdayjobs.com"
+
+  eli_lilly:
+    name: "Eli Lilly"
+    tenant: "lilly"
+    site_id: "LLY"
+    base_url: "https://lilly.wd5.myworkdayjobs.com"
+
+  merck:
+    name: "Merck (MSD)"
+    tenant: "msd"
+    site_id: "SearchJobs"
+    base_url: "https://msd.wd5.myworkdayjobs.com"
+
+  novartis:
+    name: "Novartis"
+    tenant: "novartis"
+    site_id: "Novartis_Careers"
+    base_url: "https://novartis.wd3.myworkdayjobs.com"
+
+  pfizer:
+    name: "Pfizer"
+    tenant: "pfizer"
+    site_id: "PfizerCareers"
+    base_url: "https://pfizer.wd1.myworkdayjobs.com"
+
+  # ── Industrial / Aerospace / Hardware ───────────────────────────────────
+
+  applied_materials:
+    name: "Applied Materials"
+    tenant: "amat"
+    site_id: "External"
+    base_url: "https://amat.wd1.myworkdayjobs.com"
+
+  boeing:
+    name: "Boeing"
+    tenant: "boeing"
+    site_id: "EXTERNAL_CAREERS"
+    base_url: "https://boeing.wd1.myworkdayjobs.com"
+
+  dell:
+    name: "Dell Technologies"
+    tenant: "dell"
+    site_id: "External"
+    base_url: "https://dell.wd1.myworkdayjobs.com"
+
+  hp:
+    name: "HP Inc"
+    tenant: "hp"
+    site_id: "ExternalCareerSite"
+    base_url: "https://hp.wd5.myworkdayjobs.com"
+
+  # ── Consumer / Beverages ────────────────────────────────────────────────
+
+  diageo:
+    name: "Diageo"
+    tenant: "diageo"
+    site_id: "Diageo_Careers"
+    base_url: "https://diageo.wd3.myworkdayjobs.com"
