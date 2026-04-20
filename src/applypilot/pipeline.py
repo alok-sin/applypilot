@@ -203,6 +203,16 @@ def _run_discover(workers: int = 1, site_filter: list[str] | None = None) -> dic
     else:
         stats["smartrecruiters"] = "skipped (not in discover_backends)"
 
+    # Resolve any relative URLs scraped during this run so downstream
+    # stages and the rule gate see absolute hrefs.
+    try:
+        from applypilot.enrichment.detail import resolve_all_urls
+        url_stats = resolve_all_urls(get_connection())
+        log.info("URL resolve: %d resolved, %d already absolute, %d failed",
+                 url_stats["resolved"], url_stats["already_absolute"], url_stats["failed"])
+    except Exception as e:
+        log.warning("URL resolve failed: %s", e)
+
     # Post-discover filtering: rule gate + cheap LLM sweep. Both write to
     # the `filter_reason` column so downstream stages skip rejects.
     stats["rule_gate"] = _run_rule_gate()

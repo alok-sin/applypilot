@@ -29,8 +29,17 @@ log = logging.getLogger(__name__)
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
-# Sites that block scraping -- skip detail extraction entirely
-SKIP_DETAIL_SITES = {"glassdoor", "google", "Workopolis"}
+# Sites that block scraping — skip detail extraction entirely. Source of
+# truth is `sites.yaml → blocked.sites`. Loaded once per process.
+_SKIP_DETAIL_SITES: set[str] | None = None
+
+
+def _skip_detail_sites() -> set[str]:
+    global _SKIP_DETAIL_SITES
+    if _SKIP_DETAIL_SITES is None:
+        from applypilot.config import load_blocked_sites
+        _SKIP_DETAIL_SITES, _ = load_blocked_sites()
+    return _SKIP_DETAIL_SITES
 
 # Module-level proxy config (set from CLI or caller)
 _PROXY_CONFIG: dict | None = None
@@ -702,10 +711,11 @@ def _run_detail_scraper(
 
     Returns aggregate stats dict.
     """
-    placeholders = ",".join("?" * len(SKIP_DETAIL_SITES))
+    _skip = _skip_detail_sites()
+    placeholders = ",".join("?" * len(_skip))
     rows = conn.execute(
         f"SELECT url, title, site FROM jobs WHERE detail_scraped_at IS NULL AND filter_reason IS NULL AND site NOT IN ({placeholders}) ORDER BY site",
-        list(SKIP_DETAIL_SITES),
+        list(_skip),
     ).fetchall()
 
     if not rows:
@@ -814,10 +824,11 @@ def stream_detail(
 
     try:
         while True:
-            placeholders = ",".join("?" * len(SKIP_DETAIL_SITES))
+            _skip = _skip_detail_sites()
+            placeholders = ",".join("?" * len(_skip))
             rows = conn.execute(
                 f"SELECT url, title, site FROM jobs WHERE detail_scraped_at IS NULL AND filter_reason IS NULL AND site NOT IN ({placeholders}) ORDER BY site LIMIT 200",
-                list(SKIP_DETAIL_SITES),
+                list(_skip),
             ).fetchall()
 
             if rows:

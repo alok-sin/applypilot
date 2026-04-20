@@ -12,7 +12,7 @@ Layer 2 — rule gate:
     rule_evaluate(job, cfg, profile) -> (ok, reason)
 
 `rule_evaluate` returns a reason tag suitable for storing in the `filter_reason`
-column: "seniority_mismatch" | "country_blocked" | None.
+column: "seniority_mismatch" | "country_blocked" | "excluded_title" | None.
 """
 
 from __future__ import annotations
@@ -96,6 +96,14 @@ def seniority_reject(title: str | None, user_years: int, floor_years: int) -> bo
     return bool(_JUNIOR_TITLE_RE.search(title))
 
 
+def title_excluded(title: str | None, exclude_titles: list[str]) -> bool:
+    """Reject if title contains any user-defined exclude phrase (case-insensitive)."""
+    if not title or not exclude_titles:
+        return False
+    t = title.lower()
+    return any(phrase and phrase.lower() in t for phrase in exclude_titles)
+
+
 def rule_evaluate(job: dict, search_cfg: dict, profile: dict) -> tuple[bool, str | None]:
     """Apply Layer-2 rule gate to a single job row.
 
@@ -104,7 +112,11 @@ def rule_evaluate(job: dict, search_cfg: dict, profile: dict) -> tuple[bool, str
     """
     blocked = search_cfg.get("defaults", {}).get("blocked_countries", []) or []
     floor = int(search_cfg.get("defaults", {}).get("seniority_floor_years", 0) or 0)
+    excludes = search_cfg.get("exclude_titles", []) or []
     user_years = _parse_years(profile.get("experience", {}).get("years_of_experience_total"))
+
+    if title_excluded(job.get("title"), excludes):
+        return False, "excluded_title"
 
     if seniority_reject(job.get("title"), user_years, floor):
         return False, "seniority_mismatch"

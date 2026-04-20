@@ -225,6 +225,12 @@ def load_base_urls() -> dict[str, str | None]:
     return cfg.get("base_urls", {})
 
 
+def load_judge_blocked_hosts() -> tuple[str, ...]:
+    """Load hosts the smartextract Judge should skip without an LLM call."""
+    cfg = load_sites_config()
+    return tuple(cfg.get("judge_blocked_hosts", []) or [])
+
+
 # ---------------------------------------------------------------------------
 # Default values — referenced across modules instead of magic numbers
 # ---------------------------------------------------------------------------

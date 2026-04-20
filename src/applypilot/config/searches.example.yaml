@@ -85,13 +85,23 @@ location:
 # Country for Indeed/LinkedIn/Google Jobs searches
 country: "USA"
 
-# JobSpy source boards (all available options shown)
-boards:
+# JobSpy backends (enabled set; all available: indeed, linkedin, naukri, google, glassdoor, zip_recruiter, bayt, bdjobs)
+sites:
   - indeed
   - linkedin
   - glassdoor
   - zip_recruiter
   - google
+
+# Restrict the discover stage to a subset of backends. Omit or leave empty to run all.
+# discover_backends: [jobspy, workday, greenhouse, smartrecruiters, smartextract]
+
+# Only crawl employers whose registry entry has matching tags (union). Omit to crawl all.
+# discover_tags: [faang, fintech]
+
+# Substring location filters applied to scraped rows (case-insensitive).
+# location_accept: ["United States", "Remote"]
+# location_reject_non_remote: ["India", "Philippines"]
 
 # Search defaults
 defaults:

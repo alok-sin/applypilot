@@ -526,6 +526,43 @@ def _paginate_lensa_more_jobs_response(api_response: dict, page_url: str, max_pa
 
 # -- Judge: filter API responses ---------------------------------------------
 
+# Hosts that never serve job listings (analytics, ads, consent, CDNs) live
+# in `sites.yaml` → `judge_blocked_hosts`. Loaded once per process.
+_JUDGE_BLOCKED_HOSTS: tuple[str, ...] | None = None
+
+
+def _judge_blocked_hosts() -> tuple[str, ...]:
+    global _JUDGE_BLOCKED_HOSTS
+    if _JUDGE_BLOCKED_HOSTS is None:
+        from applypilot.config import load_judge_blocked_hosts
+        _JUDGE_BLOCKED_HOSTS = load_judge_blocked_hosts()
+    return _JUDGE_BLOCKED_HOSTS
+
+
+def _should_judge(resp: dict) -> tuple[bool, str | None]:
+    """Cheap pre-check: skip the LLM call when the response is obviously not a job listing.
+
+    Returns (should_judge, skip_reason). When skip_reason is set, the response
+    is dropped without an LLM call.
+    """
+    url = resp.get("url") or ""
+    url_lc = url.lower()
+
+    for host in _judge_blocked_hosts():
+        if host in url_lc:
+            return False, f"blocked host ({host})"
+
+    status = resp.get("status")
+    if isinstance(status, int) and status != 200:
+        return False, f"status {status}"
+
+    size = resp.get("size")
+    if isinstance(size, int) and size < 200:
+        return False, f"size {size}"
+
+    return True, None
+
+
 JUDGE_PROMPT = """You are filtering intercepted API responses from a job listings website.
 Decide if this API response contains actual job listing data (titles, companies, locations, etc).
 
@@ -552,8 +589,15 @@ def judge_api_responses(api_responses: list[dict]) -> list[dict]:
 
     client = get_client("discover")
     relevant: list[dict] = []
+    skipped = 0
 
     for resp in api_responses:
+        ok, skip_reason = _should_judge(resp)
+        if not ok:
+            skipped += 1
+            log.info("Judge: %s -> SKIP (%s)", (resp.get("url") or "?")[:80], skip_reason)
+            continue
+
         fields = ""
         sample = ""
         resp_type = resp.get("type", "unknown")
@@ -590,6 +634,9 @@ def judge_api_responses(api_responses: list[dict]) -> list[dict]:
         except Exception as e:
             log.warning("Judge ERROR for %s: %s -- keeping", resp.get("url", "?")[:80], e)
             relevant.append(resp)
+
+    if skipped:
+        log.info("Judge: skipped %d response(s) via cheap prefilter (no LLM call)", skipped)
 
     return relevant
 

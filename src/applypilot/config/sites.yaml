@@ -32,6 +32,40 @@ blocked_sso:
   - "auth0.com"
   - "sso.cisco.com"
 
+# ── Hosts the smartextract Judge should skip without an LLM call ─────────
+# Analytics, error reporting, ads, maps, consent banners, in-app messaging,
+# CDNs — never serve job listings. Substring match on the response URL.
+judge_blocked_hosts:
+  - "sentry.io"
+  - "ingest.sentry.io"
+  - "hubspot.com"
+  - "hubapi.com"
+  - "hsforms.net"
+  - "hscollectedforms.net"
+  - "ads.linkedin.com"
+  - "px.ads.linkedin.com"
+  - "google-analytics.com"
+  - "googletagmanager.com"
+  - "doubleclick.net"
+  - "googleapis.com/maps"
+  - "maps.googleapis.com"
+  - "maps.gstatic.com"
+  - "onetrust.com"
+  - "cookielaw.org"
+  - "productfruits.com"
+  - "intercom.io"
+  - "intercomcdn.com"
+  - "segment.io"
+  - "segment.com"
+  - "mixpanel.com"
+  - "amplitude.com"
+  - "fullstory.com"
+  - "hotjar.com"
+  - "logrocket.com"
+  - "cloudflareinsights.com"
+  - "facebook.com/tr"
+  - "connect.facebook.net"
+
 # ── Base URLs for URL resolution ─────────────────────────────────────────
 # Used by detail enrichment to resolve relative URLs scraped from sites.
 # Sites not listed here (or with null) cannot have relative URLs resolved.
@@ -52,6 +86,7 @@ base_urls:
   "Himalayas": "https://himalayas.app"
   "Techstars Jobs": "https://www.techstars.com"
   "Randstad Canada": "https://www.randstad.ca/jobs/search/"
+  "Lensa": "https://lensa.com"
 
 sites:
   # ── Searchable sites (URL includes query + location params) ──────────

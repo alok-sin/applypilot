@@ -69,7 +69,7 @@ def _build_user_msg(job: dict, profile: dict, search_cfg: dict) -> str:
     years = exp.get("years_of_experience_total") or "?"
     target = exp.get("target_role") or "?"
     country = personal.get("country") or "?"
-    remote_ok = "yes" if any("remote" in str(l).lower() for l in search_cfg.get("locations", [])) else "unknown"
+    remote_ok = "yes" if any(bool(l.get("remote")) for l in search_cfg.get("locations", []) if isinstance(l, dict)) else "unknown"
     desc = (job.get("description") or "")[:800]
     return (
         f"CANDIDATE: {years} yrs experience, target role: {target}, country: {country}, remote ok: {remote_ok}.\n\n"
