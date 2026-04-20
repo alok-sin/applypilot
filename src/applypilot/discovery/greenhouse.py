@@ -15,9 +15,9 @@ from typing import Optional
 import httpx
 import yaml
 
-from applypilot import config
 from applypilot.config import APP_DIR, CONFIG_DIR
 from applypilot.database import get_connection
+from applypilot.discovery.filters import _load_location_filter, _location_ok
 
 log = logging.getLogger(__name__)
 
@@ -54,37 +54,6 @@ def load_employers() -> dict:
     except Exception as e:
         log.error("Failed to load package config: %s", e)
         return {}
-
-
-def _load_location_filter(search_cfg: dict | None = None):
-    """Load location accept/reject lists from search config."""
-    if search_cfg is None:
-        search_cfg = config.load_search_config()
-
-    accept = search_cfg.get("location_accept", [])
-    reject = search_cfg.get("location_reject_non_remote", [])
-    return accept, reject
-
-
-def _location_ok(location: str | None, accept: list[str], reject: list[str]) -> bool:
-    """Check if a job location passes the user's location filter."""
-    if not location:
-        return True
-
-    loc = location.lower()
-
-    if any(r in loc for r in ("remote", "anywhere", "work from home", "wfh", "distributed")):
-        return True
-
-    for r in reject:
-        if r.lower() in loc:
-            return False
-
-    for a in accept:
-        if a.lower() in loc:
-            return True
-
-    return False
 
 
 def _title_matches_query(title: str, query: str) -> bool:
@@ -154,13 +123,27 @@ def fetch_jobs_api(board_token: str, content: bool = True) -> dict | None:
         return None
 
 
-def parse_api_response(data: dict, company_name: str, query: str = "") -> list[dict]:
+def _is_stale(updated_at: str | None, max_hours: int | None) -> bool:
+    """Return True if `updated_at` is older than `max_hours` hours ago."""
+    if not updated_at or not max_hours or max_hours <= 0:
+        return False
+    try:
+        # Greenhouse returns ISO8601 with trailing 'Z'.
+        ts = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
+    except Exception:
+        return False
+    age_h = (datetime.now(timezone.utc) - ts).total_seconds() / 3600
+    return age_h > max_hours
+
+
+def parse_api_response(data: dict, company_name: str, query: str = "", max_hours: int | None = None) -> list[dict]:
     """Parse job listings from Greenhouse API response.
 
     Args:
         data: API response dict with "jobs" key
         company_name: Display name of the company
         query: Optional query string to filter jobs
+        max_hours: If set, drop jobs whose updated_at is older than this.
 
     Returns:
         List of job dicts with standardized fields
@@ -176,6 +159,10 @@ def parse_api_response(data: dict, company_name: str, query: str = "") -> list[d
 
             # Filter by query
             if query and not _title_matches_query(title, query):
+                continue
+
+            # Drop stale postings using the API-reported updated_at.
+            if _is_stale(job_data.get("updated_at"), max_hours):
                 continue
 
             # Extract location
@@ -226,6 +213,7 @@ def search_employer(
     location_filter: bool = True,
     accept_locs: list[str] | None = None,
     reject_locs: list[str] | None = None,
+    max_hours: int | None = None,
 ) -> list[dict]:
     """Search a single Greenhouse employer via API."""
     log.info('%s: searching "%s"...', employer["name"], search_text)
@@ -235,7 +223,7 @@ def search_employer(
     if not api_data:
         return []
 
-    jobs = parse_api_response(api_data, employer["name"], search_text)
+    jobs = parse_api_response(api_data, employer["name"], search_text, max_hours=max_hours)
 
     # Apply location filter
     if location_filter and (accept_locs or reject_locs):
@@ -268,6 +256,10 @@ def search_all(
 
     accept_locs, reject_locs = _load_location_filter()
 
+    # Pull max_hours from search config so stale postings get dropped at fetch time.
+    search_cfg = _cfg.load_search_config() or {}
+    max_hours = int(search_cfg.get("defaults", {}).get("hours_old") or 0) or None
+
     log.info('Greenhouse API search: %d employers, "%s", workers=%d', len(employers), search_text, workers)
 
     all_jobs = []
@@ -283,6 +275,7 @@ def search_all(
                 location_filter,
                 accept_locs,
                 reject_locs,
+                max_hours,
             ): key
             for key, emp in employers.items()
         }

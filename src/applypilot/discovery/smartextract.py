@@ -23,6 +23,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from urllib.parse import quote_plus
 
+import httpx
 import yaml
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright

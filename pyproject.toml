@@ -27,6 +27,8 @@ dependencies = [
     "python-dotenv>=1.0",
     "pyyaml>=6.0",
     "pandas>=2.0",
+    "python-jobspy>=1.1.80",
+    "tenacity>=8.2",
     ]
 
 [project.optional-dependencies]

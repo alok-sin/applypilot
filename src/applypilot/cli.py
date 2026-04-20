@@ -199,6 +199,7 @@ def run(
         ),
     ),
     min_score: int = typer.Option(7, "--min-score", help="Minimum fit score for tailor/cover stages."),
+    limit: int = typer.Option(20, "--limit", help="Max jobs per tailor/cover batch. Use 0 for no limit."),
     rescore_above: Optional[int] = typer.Option(
         None,
         "--rescore-above",
@@ -277,6 +278,7 @@ def run(
         site_filter=site_filter,
         validation_mode=validation,
         rescore_above=rescore_above,
+        limit=limit,
     )
 
     if result.get("errors"):

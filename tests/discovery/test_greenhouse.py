@@ -320,7 +320,7 @@ class TestSearchEmployer:
 
         assert len(jobs) == 1
         mock_fetch.assert_called_once_with("test", content=True)
-        mock_parse.assert_called_once_with({"jobs": []}, "Test Company", "engineer")
+        mock_parse.assert_called_once_with({"jobs": []}, "Test Company", "engineer", max_hours=None)
 
     @patch("applypilot.discovery.greenhouse.fetch_jobs_api")
     def test_search_no_api_returns_empty(self, mock_fetch):

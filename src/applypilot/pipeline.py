@@ -109,6 +109,8 @@ def _run_discover(workers: int = 1, site_filter: list[str] | None = None) -> dic
             stats["smartextract"] = f"error: {e}"
             stats["greenhouse"] = "skipped (site-filter)"
             stats["smartrecruiters"] = "skipped (site-filter)"
+        stats["rule_gate"] = _run_rule_gate()
+        stats["llm_sweep"] = _run_llm_sweep()
         return stats
 
     # Backend gating: if discover_backends is set, only run listed backends
@@ -201,7 +203,69 @@ def _run_discover(workers: int = 1, site_filter: list[str] | None = None) -> dic
     else:
         stats["smartrecruiters"] = "skipped (not in discover_backends)"
 
+    # Post-discover filtering: rule gate + cheap LLM sweep. Both write to
+    # the `filter_reason` column so downstream stages skip rejects.
+    stats["rule_gate"] = _run_rule_gate()
+    stats["llm_sweep"] = _run_llm_sweep()
+
     return stats
+
+
+def _run_rule_gate() -> str:
+    """Layer 2: deterministic rule gate across all unfiltered discovered rows."""
+    try:
+        from applypilot.config import load_profile, load_search_config
+        from applypilot.discovery.filters import rule_evaluate
+
+        search_cfg = load_search_config() or {}
+        try:
+            profile = load_profile()
+        except FileNotFoundError:
+            log.info("Rule gate skipped — no profile found.")
+            return "skipped (no profile)"
+
+        conn = get_connection()
+        rows = conn.execute(
+            "SELECT url, title, location FROM jobs "
+            "WHERE filter_reason IS NULL AND detail_scraped_at IS NULL"
+        ).fetchall()
+
+        rejected = 0
+        for row in rows:
+            job = dict(row) if not isinstance(row, dict) else row
+            ok, reason = rule_evaluate(job, search_cfg, profile)
+            if not ok:
+                conn.execute(
+                    "UPDATE jobs SET filter_reason = ? WHERE url = ?",
+                    (reason, job["url"]),
+                )
+                rejected += 1
+        if rejected:
+            conn.commit()
+        console.print(f"  [cyan]Rule gate:[/cyan] rejected {rejected}/{len(rows)}")
+        return f"ok ({rejected} rejected of {len(rows)})"
+    except Exception as e:
+        log.error("Rule gate failed: %s", e)
+        console.print(f"  [red]Rule gate error:[/red] {e}")
+        return f"error: {e}"
+
+
+def _run_llm_sweep() -> str:
+    """Layer 3: cheap per-job LLM classifier."""
+    try:
+        from applypilot.discovery.llm_sweep import run_llm_sweep
+        result = run_llm_sweep()
+        if result.get("skipped"):
+            console.print("  [yellow]LLM sweep skipped[/yellow]")
+            return "skipped"
+        console.print(
+            f"  [cyan]LLM sweep:[/cyan] checked {result['checked']}, rejected {result['rejected']}, errors {result['errors']}"
+        )
+        return f"ok (checked={result['checked']}, rejected={result['rejected']})"
+    except Exception as e:
+        log.error("LLM sweep failed: %s", e)
+        console.print(f"  [red]LLM sweep error:[/red] {e}")
+        return f"error: {e}"
 
 
 def _run_enrich(workers: int = 1, headless: bool = True) -> dict:
@@ -226,22 +290,24 @@ def _run_score(rescore_above: int | None = None) -> dict:
         return {"status": f"error: {e}"}
 
 
-def _run_tailor(min_score: int = 7, validation_mode: str = "normal") -> dict:
+def _run_tailor(min_score: int = 7, validation_mode: str = "normal",
+                limit: int = 20) -> dict:
     """Stage: Resume tailoring — generate tailored resumes for high-fit jobs."""
     try:
         from applypilot.scoring.tailor import run_tailoring
-        run_tailoring(min_score=min_score, validation_mode=validation_mode)
+        run_tailoring(min_score=min_score, validation_mode=validation_mode, limit=limit)
         return {"status": "ok"}
     except Exception as e:
         log.error("Tailoring failed: %s", e)
         return {"status": f"error: {e}"}
 
 
-def _run_cover(min_score: int = 7, validation_mode: str = "normal") -> dict:
+def _run_cover(min_score: int = 7, validation_mode: str = "normal",
+               limit: int = 20) -> dict:
     """Stage: Cover letter generation."""
     try:
         from applypilot.scoring.cover_letter import run_cover_letters
-        run_cover_letters(min_score=min_score, validation_mode=validation_mode)
+        run_cover_letters(min_score=min_score, validation_mode=validation_mode, limit=limit)
         return {"status": "ok"}
     except Exception as e:
         log.error("Cover letter generation failed: %s", e)
@@ -324,24 +390,29 @@ class _StageTracker:
             return dict(self._results)
 
 
-# SQL to count pending work for each stage
+# SQL to count pending work for each stage.
+# All downstream stages exclude rows where filter_reason is set (rule gate,
+# LLM sweep, or any stage that detected a mismatch later).
 _PENDING_SQL: dict[str, str] = {
-    "enrich": "SELECT COUNT(*) FROM jobs WHERE detail_scraped_at IS NULL",
-    "score":  "SELECT COUNT(*) FROM jobs WHERE full_description IS NOT NULL AND fit_score IS NULL",
+    "enrich": "SELECT COUNT(*) FROM jobs WHERE detail_scraped_at IS NULL AND filter_reason IS NULL",
+    "score":  "SELECT COUNT(*) FROM jobs WHERE full_description IS NOT NULL AND fit_score IS NULL AND filter_reason IS NULL",
     "tailor": (
         "SELECT COUNT(*) FROM jobs WHERE fit_score >= ? "
         "AND full_description IS NOT NULL "
         "AND tailored_resume_path IS NULL "
+        "AND filter_reason IS NULL "
         "AND COALESCE(tailor_attempts, 0) < 5"
     ),
     "cover": (
         "SELECT COUNT(*) FROM jobs WHERE tailored_resume_path IS NOT NULL "
         "AND (cover_letter_path IS NULL OR cover_letter_path = '') "
+        "AND filter_reason IS NULL "
         "AND COALESCE(cover_attempts, 0) < 5"
     ),
     "pdf": (
         "SELECT COUNT(*) FROM jobs WHERE tailored_resume_path IS NOT NULL "
-        "AND tailored_resume_path NOT LIKE '%.pdf'"
+        "AND tailored_resume_path NOT LIKE '%.pdf' "
+        "AND filter_reason IS NULL"
     ),
 }
 
@@ -370,6 +441,7 @@ def _run_stage_streaming(
     headless: bool = True,
     site_filter: list[str] | None = None,
     rescore_above: int | None = None,
+    limit: int = 20,
 ) -> None:
     """Run a single stage in streaming mode: loop until upstream done + no work.
 
@@ -382,6 +454,7 @@ def _run_stage_streaming(
     if stage in ("tailor", "cover"):
         kwargs["min_score"] = min_score
         kwargs["validation_mode"] = validation_mode
+        kwargs["limit"] = limit
     if stage in ("discover", "enrich"):
         kwargs["workers"] = workers
     if stage == "discover":
@@ -440,7 +513,8 @@ def _run_stage_streaming(
 def _run_sequential(ordered: list[str], min_score: int, workers: int = 1,
                     validation_mode: str = "normal", headless: bool = True,
                     site_filter: list[str] | None = None,
-                    rescore_above: int | None = None) -> dict:
+                    rescore_above: int | None = None,
+                    limit: int = 20) -> dict:
     """Execute stages one at a time (original behavior)."""
     results: list[dict] = []
     errors: dict[str, str] = {}
@@ -461,6 +535,7 @@ def _run_sequential(ordered: list[str], min_score: int, workers: int = 1,
             if name in ("tailor", "cover"):
                 kwargs["min_score"] = min_score
                 kwargs["validation_mode"] = validation_mode
+                kwargs["limit"] = limit
             if name in ("discover", "enrich"):
                 kwargs["workers"] = workers
             if name == "discover":
@@ -502,7 +577,8 @@ def _run_sequential(ordered: list[str], min_score: int, workers: int = 1,
 def _run_streaming(ordered: list[str], min_score: int, workers: int = 1,
                    validation_mode: str = "normal", headless: bool = True,
                    site_filter: list[str] | None = None,
-                   rescore_above: int | None = None) -> dict:
+                   rescore_above: int | None = None,
+                   limit: int = 20) -> dict:
     """Execute stages concurrently with DB as conveyor belt."""
     tracker = _StageTracker()
     stop_event = threading.Event()
@@ -524,7 +600,7 @@ def _run_streaming(ordered: list[str], min_score: int, workers: int = 1,
         start_times[name] = time.time()
         t = threading.Thread(
             target=_run_stage_streaming,
-            args=(name, tracker, stop_event, min_score, workers, validation_mode, headless, site_filter, rescore_above),
+            args=(name, tracker, stop_event, min_score, workers, validation_mode, headless, site_filter, rescore_above, limit),
             name=f"stage-{name}",
             daemon=True,
         )
@@ -575,6 +651,7 @@ def run_pipeline(
     site_filter: list[str] | None = None,
     validation_mode: str = "normal",
     rescore_above: int | None = None,
+    limit: int = 20,
 ) -> dict:
     """Run pipeline stages.
 
@@ -631,13 +708,15 @@ def run_pipeline(
                                 headless=headless,
                                 validation_mode=validation_mode,
                                 site_filter=site_filter,
-                                rescore_above=rescore_above)
+                                rescore_above=rescore_above,
+                                limit=limit)
     else:
         result = _run_sequential(ordered, min_score, workers=workers,
                                  headless=headless,
                                  validation_mode=validation_mode,
                                  site_filter=site_filter,
-                                 rescore_above=rescore_above)
+                                 rescore_above=rescore_above,
+                                 limit=limit)
 
     # Summary table
     console.print(f"\n{'=' * 70}")

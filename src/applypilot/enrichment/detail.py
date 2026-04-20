@@ -704,7 +704,7 @@ def _run_detail_scraper(
     """
     placeholders = ",".join("?" * len(SKIP_DETAIL_SITES))
     rows = conn.execute(
-        f"SELECT url, title, site FROM jobs WHERE detail_scraped_at IS NULL AND site NOT IN ({placeholders}) ORDER BY site",
+        f"SELECT url, title, site FROM jobs WHERE detail_scraped_at IS NULL AND filter_reason IS NULL AND site NOT IN ({placeholders}) ORDER BY site",
         list(SKIP_DETAIL_SITES),
     ).fetchall()
 
@@ -816,7 +816,7 @@ def stream_detail(
         while True:
             placeholders = ",".join("?" * len(SKIP_DETAIL_SITES))
             rows = conn.execute(
-                f"SELECT url, title, site FROM jobs WHERE detail_scraped_at IS NULL AND site NOT IN ({placeholders}) ORDER BY site LIMIT 200",
+                f"SELECT url, title, site FROM jobs WHERE detail_scraped_at IS NULL AND filter_reason IS NULL AND site NOT IN ({placeholders}) ORDER BY site LIMIT 200",
                 list(SKIP_DETAIL_SITES),
             ).fetchall()
 

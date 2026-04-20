@@ -11,7 +11,7 @@ import time
 from datetime import datetime, timezone
 
 from applypilot.config import RESUME_PATH
-from applypilot.database import get_connection, get_jobs_by_stage
+from applypilot.database import get_connection, get_jobs_by_stage, mark_filtered
 from applypilot.llm import get_client
 
 log = logging.getLogger(__name__)
@@ -130,9 +130,12 @@ def score_job(resume_text: str, job: dict) -> dict:
         f"DESCRIPTION:\n{(job.get('full_description') or '')[:6000]}"
     )
 
+    # Split so the system prompt + resume form stable cached blocks across
+    # every score call; the per-job posting is the only varying segment.
     messages = [
-        {"role": "system", "content": SCORE_PROMPT},
-        {"role": "user", "content": f"RESUME:\n{resume_text}\n\n---\n\nJOB POSTING:\n{job_text}"},
+        {"role": "system", "content": SCORE_PROMPT, "cache": "ephemeral"},
+        {"role": "user", "content": f"RESUME:\n{resume_text}", "cache": "ephemeral"},
+        {"role": "user", "content": f"JOB POSTING:\n{job_text}"},
     ]
 
     try:
@@ -167,6 +170,7 @@ def run_scoring(
         query = (
             "SELECT * FROM jobs WHERE full_description IS NOT NULL "
             "AND fit_score IS NOT NULL AND fit_score >= ? "
+            "AND filter_reason IS NULL "
             "ORDER BY fit_score DESC"
         )
         params: list = [rescore_above]
@@ -176,7 +180,7 @@ def run_scoring(
         jobs = conn.execute(query, params).fetchall()
         log.info("Rescoring %d job(s) with fit_score >= %d", len(jobs), rescore_above)
     elif rescore:
-        query = "SELECT * FROM jobs WHERE full_description IS NOT NULL"
+        query = "SELECT * FROM jobs WHERE full_description IS NOT NULL AND filter_reason IS NULL"
         if limit > 0:
             query += f" LIMIT {limit}"
         jobs = conn.execute(query).fetchall()
@@ -218,6 +222,10 @@ def run_scoring(
             "UPDATE jobs SET fit_score = ?, score_reasoning = ?, scored_at = ? WHERE url = ?",
             (result["score"], f"KEYWORDS: {result['keywords']}\nREASONING: {result['reasoning']}", now, result["url"]),
         )
+        # Progressive filter: a fit score of 1-2 is an unambiguous mismatch.
+        # Hard-filter it so downstream stages don't reconsider if min_score is lowered.
+        if 1 <= result["score"] <= 2:
+            mark_filtered(result["url"], "low_fit", conn=conn)
         conn.commit()
 
     elapsed = time.time() - t0

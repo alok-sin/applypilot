@@ -5,6 +5,7 @@ postings. All personal data (name, skills, achievements) comes from the user's
 profile at runtime. No hardcoded personal information.
 """
 
+import hashlib
 import logging
 import json
 import re
@@ -165,21 +166,20 @@ def generate_cover_letter(
     cl_prompt_base = _build_cover_letter_prompt(profile)
 
     for attempt in range(max_retries + 1):
-        # Fresh conversation every attempt
-        prompt = cl_prompt_base
+        # System prompt + resume stay byte-stable so they hit the prefix cache
+        # across every cover-letter call. Avoid-notes and job text vary.
+        messages: list = [
+            {"role": "system", "content": cl_prompt_base, "cache": "ephemeral"},
+            {"role": "user", "content": f"RESUME:\n{resume_text}", "cache": "ephemeral"},
+        ]
         if avoid_notes:
-            prompt += "\n\n## AVOID THESE ISSUES:\n" + "\n".join(
+            avoid_block = "## AVOID THESE ISSUES:\n" + "\n".join(
                 f"- {n}" for n in avoid_notes[-5:]
             )
-
-        messages = [
-            {"role": "system", "content": prompt},
-            {"role": "user", "content": (
-                f"RESUME:\n{resume_text}\n\n---\n\n"
-                f"TARGET JOB:\n{job_text}\n\n"
-                "Write the cover letter:"
-            )},
-        ]
+            messages.append({"role": "user", "content": avoid_block})
+        messages.append({"role": "user", "content": (
+            f"TARGET JOB:\n{job_text}\n\nWrite the cover letter:"
+        )})
 
         letter = client.chat(messages, max_output_tokens=10000)
         letter = sanitize_text(letter)  # auto-fix em dashes, smart quotes
@@ -220,16 +220,21 @@ def run_cover_letters(min_score: int = 7, limit: int = 20,
     resume_text = RESUME_PATH.read_text(encoding="utf-8")
     conn = get_connection()
 
-    # Fetch jobs that have tailored resumes but no cover letter yet
-    jobs = conn.execute(
+    # Fetch jobs that have tailored resumes but no cover letter yet.
+    # limit <= 0 means no cap — process every pending job.
+    query = (
         "SELECT * FROM jobs "
         "WHERE fit_score >= ? AND tailored_resume_path IS NOT NULL "
         "AND full_description IS NOT NULL "
         "AND (cover_letter_path IS NULL OR cover_letter_path = '') "
         "AND COALESCE(cover_attempts, 0) < ? "
-        "ORDER BY fit_score DESC LIMIT ?",
-        (min_score, MAX_ATTEMPTS, limit),
-    ).fetchall()
+        "ORDER BY fit_score DESC"
+    )
+    params: list = [min_score, MAX_ATTEMPTS]
+    if limit > 0:
+        query += " LIMIT ?"
+        params.append(limit)
+    jobs = conn.execute(query, params).fetchall()
 
     if not jobs:
         log.info("No jobs needing cover letters (score >= %d).", min_score)
@@ -259,10 +264,13 @@ def run_cover_letters(min_score: int = 7, limit: int = 20,
                 job_resume, job, profile, validation_mode=validation_mode
             )
 
-            # Build safe filename prefix
+            # Build safe filename prefix. The URL-derived hash suffix keeps
+            # prefixes unique when two jobs share the same site+title and stays
+            # stable across re-runs of the same job.
             safe_title = re.sub(r"[^\w\s-]", "", job["title"])[:50].strip().replace(" ", "_")
             safe_site = re.sub(r"[^\w\s-]", "", job["site"])[:20].strip().replace(" ", "_")
-            prefix = f"{safe_site}_{safe_title}"
+            url_hash = hashlib.blake2b(job["url"].encode("utf-8"), digest_size=4).hexdigest()
+            prefix = f"{safe_site}_{safe_title}_{url_hash}"
 
             cl_path = COVER_LETTER_DIR / f"{prefix}_CL.txt"
             cl_path.write_text(letter, encoding="utf-8")

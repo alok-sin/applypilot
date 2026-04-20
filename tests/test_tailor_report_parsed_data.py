@@ -32,7 +32,7 @@ def test_tailor_resume_returns_parsed_json_but_omits_it_from_report(monkeypatch)
             _ = messages, max_output_tokens
             return '{"title":"Software Engineer","summary":"Practical engineer.","skills":{"Languages":"Python"},"experience":[{"title":"Engineer","company_dates":"Example Co | 2022-Present","bullets":["Built APIs"]}],"education":"State University | BS"}'
 
-    monkeypatch.setattr(tailor, "get_client", lambda: FakeClient())
+    monkeypatch.setattr(tailor, "get_client", lambda *args, **kwargs: FakeClient())
     monkeypatch.setattr(tailor, "extract_json", lambda raw: parsed)
     monkeypatch.setattr(
         tailor,

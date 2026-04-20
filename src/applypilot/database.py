@@ -165,6 +165,9 @@ _ALL_COLUMNS: dict[str, str] = {
     "site": "TEXT",
     "strategy": "TEXT",
     "discovered_at": "TEXT",
+    # Pre-enrich filtering (rule gate + LLM sweep + any downstream-detected mismatch)
+    "filter_reason": "TEXT",
+    "prefiltered_at": "TEXT",
     # Enrichment
     "full_description": "TEXT",
     "application_url": "TEXT",
@@ -232,6 +235,23 @@ def ensure_columns(conn: sqlite3.Connection | None = None) -> list[str]:
     return added
 
 
+def mark_filtered(url: str, reason: str, conn: sqlite3.Connection | None = None) -> None:
+    """Stamp a job as filtered so downstream stages skip it.
+
+    Any stage may call this when it detects a mismatch the earlier cheap
+    layers missed (e.g., scorer sees an obviously off-country full JD;
+    tailor sees an expired notice). Idempotent: existing filter_reason
+    is preserved if already set.
+    """
+    if conn is None:
+        conn = get_connection()
+    conn.execute(
+        "UPDATE jobs SET filter_reason = COALESCE(filter_reason, ?) WHERE url = ?",
+        (reason, url),
+    )
+    conn.commit()
+
+
 def get_stats(conn: sqlite3.Connection | None = None) -> dict:
     """Return job counts by pipeline stage.
 
@@ -261,9 +281,14 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
     ).fetchall()
     stats["by_site"] = [(row[0], row[1]) for row in rows]
 
-    # Enrichment stage
+    # Filtered rows (rule gate, LLM sweep, or downstream mismatch detection)
+    stats["filtered"] = conn.execute(
+        "SELECT COUNT(*) FROM jobs WHERE filter_reason IS NOT NULL"
+    ).fetchone()[0]
+
+    # Enrichment stage — only count rows that haven't been filtered out.
     stats["pending_detail"] = conn.execute(
-        "SELECT COUNT(*) FROM jobs WHERE detail_scraped_at IS NULL"
+        "SELECT COUNT(*) FROM jobs WHERE detail_scraped_at IS NULL AND filter_reason IS NULL"
     ).fetchone()[0]
 
     stats["with_description"] = conn.execute(
@@ -281,7 +306,7 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
 
     stats["unscored"] = conn.execute(
         "SELECT COUNT(*) FROM jobs "
-        "WHERE full_description IS NOT NULL AND fit_score IS NULL"
+        "WHERE full_description IS NOT NULL AND fit_score IS NULL AND filter_reason IS NULL"
     ).fetchone()[0]
 
     # Score distribution
@@ -403,18 +428,20 @@ def get_jobs_by_stage(conn: sqlite3.Connection | None = None,
 
     conditions = {
         "discovered": "1=1",
-        "pending_detail": "detail_scraped_at IS NULL",
+        "pending_detail": "detail_scraped_at IS NULL AND filter_reason IS NULL",
         "enriched": "full_description IS NOT NULL",
-        "pending_score": "full_description IS NOT NULL AND fit_score IS NULL",
+        "pending_score": "full_description IS NOT NULL AND fit_score IS NULL AND filter_reason IS NULL",
         "scored": "fit_score IS NOT NULL",
         "pending_tailor": (
             "fit_score >= ? AND full_description IS NOT NULL "
-            "AND tailored_resume_path IS NULL AND COALESCE(tailor_attempts, 0) < 5"
+            "AND tailored_resume_path IS NULL AND filter_reason IS NULL "
+            "AND COALESCE(tailor_attempts, 0) < 5"
         ),
         "tailored": "tailored_resume_path IS NOT NULL",
         "pending_apply": (
             "tailored_resume_path IS NOT NULL AND applied_at IS NULL "
             "AND application_url IS NOT NULL "
+            "AND filter_reason IS NULL "
             "AND (apply_status IS NULL OR apply_status = 'failed') "
             "AND COALESCE(apply_attempts, 0) < ? "
             "AND COALESCE(fit_score, 0) >= ?"

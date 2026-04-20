@@ -9,6 +9,7 @@ is always code-injected, never LLM-generated. Each retry starts a fresh conversa
 to avoid apologetic spirals.
 """
 
+import hashlib
 import json
 import logging
 import re
@@ -324,11 +325,13 @@ def judge_tailored_resume(
     """
     judge_prompt = _build_judge_prompt(profile)
 
+    # Static parts (judge_prompt + ORIGINAL RESUME) split into cached blocks;
+    # the tailored output varies per call so it stays uncached.
     messages = [
-        {"role": "system", "content": judge_prompt},
+        {"role": "system", "content": judge_prompt, "cache": "ephemeral"},
+        {"role": "user", "content": f"ORIGINAL RESUME:\n{original_text}", "cache": "ephemeral"},
         {"role": "user", "content": (
             f"JOB TITLE: {job_title}\n\n"
-            f"ORIGINAL RESUME:\n{original_text}\n\n---\n\n"
             f"TAILORED RESUME:\n{tailored_text}\n\n"
             "Judge this tailored resume:"
         )},
@@ -396,17 +399,20 @@ def tailor_resume(
     for attempt in range(max_retries + 1):
         report["attempts"] = attempt + 1
 
-        # Fresh conversation every attempt
-        prompt = tailor_prompt_base
+        # Keep the system prompt + resume byte-stable across attempts/jobs so
+        # they hit the prefix cache. Avoid-notes and per-job content go in
+        # later messages that can vary freely without busting the cache.
+        user_parts: list[str] = [f"ORIGINAL RESUME:\n{resume_text}"]
+        messages: list = [
+            {"role": "system", "content": tailor_prompt_base, "cache": "ephemeral"},
+            {"role": "user", "content": user_parts[0], "cache": "ephemeral"},
+        ]
         if avoid_notes:
-            prompt += "\n\n## AVOID THESE ISSUES (from previous attempt):\n" + "\n".join(
+            avoid_block = "## AVOID THESE ISSUES (from previous attempt):\n" + "\n".join(
                 f"- {n}" for n in avoid_notes[-5:]
             )
-
-        messages = [
-            {"role": "system", "content": prompt},
-            {"role": "user", "content": f"ORIGINAL RESUME:\n{resume_text}\n\n---\n\nTARGET JOB:\n{job_text}\n\nReturn the JSON:"},
-        ]
+            messages.append({"role": "user", "content": avoid_block})
+        messages.append({"role": "user", "content": f"TARGET JOB:\n{job_text}\n\nReturn the JSON:"})
 
         raw = client.chat(messages, max_output_tokens=16000)
 
@@ -511,10 +517,14 @@ def run_tailoring(min_score: int = 7, limit: int = 20,
                 resume_text, job, profile, validation_mode=validation_mode
             )
 
-            # Build safe filename prefix
+            # Build safe filename prefix. The URL-derived hash suffix keeps
+            # prefixes unique when two jobs share the same site+title (reposts,
+            # same role at multiple tenants, or titles that collide after
+            # truncation) and stays stable across re-runs of the same job.
             safe_title = re.sub(r"[^\w\s-]", "", job["title"])[:50].strip().replace(" ", "_")
             safe_site = re.sub(r"[^\w\s-]", "", job["site"])[:20].strip().replace(" ", "_")
-            prefix = f"{safe_site}_{safe_title}"
+            url_hash = hashlib.blake2b(job["url"].encode("utf-8"), digest_size=4).hexdigest()
+            prefix = f"{safe_site}_{safe_title}_{url_hash}"
 
             # Save structured resume JSON as the canonical intermediate artifact.
             json_path = TAILORED_DIR / f"{prefix}.json"

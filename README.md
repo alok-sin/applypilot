@@ -211,13 +211,15 @@ applypilot --log-file ~/.applypilot/run.log status    # Mirror logs to a file ex
 applypilot run [stages...]              # Run pipeline stages (or 'all')
 applypilot run --workers 4              # Parallel discovery/enrichment
 applypilot run --stream                 # Concurrent stages (streaming mode)
-applypilot run --min-score 8            # Override score threshold
+applypilot run --min-score 8            # Override score threshold (tailor/cover stages)
+applypilot run tailor cover --limit 0   # Process every pending job (default cap is 20 per batch)
 applypilot run --dry-run                # Preview without executing
+applypilot run score --rescore-above 7  # Re-score jobs whose fit_score is >= N (score stage)
 applypilot run discover --site-filter Lensa  # Only run smart extract for matching sites
 applypilot run enrich --show-browser    # Show browser during enrichment
 applypilot run enrich --reset-enrich-errors  # Retry jobs that previously failed enrichment
-applypilot run --validation lenient     # Relax validation (recommended for Gemini free tier)
-applypilot run --validation strict      # Strictest validation (retries on any banned word)
+applypilot run tailor --validation lenient   # Relax validation (recommended for Gemini free tier)
+applypilot run tailor --validation strict    # Strictest validation (retries on any banned word)
 applypilot add-url URL                  # Add or update a job by URL
 applypilot apply                        # Launch auto-apply
 applypilot apply --workers 3            # Parallel browser workers

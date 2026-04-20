@@ -18,6 +18,7 @@ import yaml
 from applypilot import config
 from applypilot.config import APP_DIR, CONFIG_DIR
 from applypilot.database import get_connection
+from applypilot.discovery.filters import _load_location_filter, _location_ok
 
 log = logging.getLogger(__name__)
 
@@ -54,37 +55,6 @@ def load_employers() -> dict:
         return {}
 
 
-def _load_location_filter(search_cfg: dict | None = None):
-    """Load location accept/reject lists from search config."""
-    if search_cfg is None:
-        search_cfg = config.load_search_config()
-
-    accept = search_cfg.get("location_accept", [])
-    reject = search_cfg.get("location_reject_non_remote", [])
-    return accept, reject
-
-
-def _location_ok(location: str | None, accept: list[str], reject: list[str]) -> bool:
-    """Check if a job location passes the user's location filter."""
-    if not location:
-        return True
-
-    loc = location.lower()
-
-    if any(r in loc for r in ("remote", "anywhere", "work from home", "wfh", "distributed")):
-        return True
-
-    for r in reject:
-        if r.lower() in loc:
-            return False
-
-    for a in accept:
-        if a.lower() in loc:
-            return True
-
-    return False
-
-
 def _title_matches_query(title: str, query: str) -> bool:
     """Check if job title matches search query (simple keyword matching)."""
     if not query:
@@ -116,13 +86,22 @@ def _format_location(loc_obj: dict | None) -> str:
     return ", ".join(p.strip() for p in parts if p)
 
 
-def fetch_jobs_api(slug: str, offset: int = 0, limit: int = PAGE_SIZE) -> dict | None:
+def fetch_jobs_api(slug: str, offset: int = 0, limit: int = PAGE_SIZE,
+                   country: str | None = None) -> dict | None:
     """Fetch one page of postings from SmartRecruiters API.
+
+    Args:
+        slug: SmartRecruiters company slug.
+        offset / limit: pagination.
+        country: ISO country name passed to the API so off-country rows never
+            come back (belt-and-braces with the client-side location filter).
 
     Returns API response dict with "totalFound" and "content", or None on error.
     """
     url = f"{SMARTRECRUITERS_API_BASE}/{slug}/postings"
-    params = {"limit": limit, "offset": offset}
+    params: dict[str, str | int] = {"limit": limit, "offset": offset}
+    if country:
+        params["country"] = country
 
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -220,6 +199,7 @@ def search_employer(
     location_filter: bool = True,
     accept_locs: list[str] | None = None,
     reject_locs: list[str] | None = None,
+    country: str | None = None,
 ) -> list[dict]:
     """Search a single SmartRecruiters employer, paginating through all postings."""
     slug = employer.get("slug") or employer_key
@@ -231,7 +211,7 @@ def search_employer(
     max_pages = 30  # cap at 3000 jobs per employer
 
     for _ in range(max_pages):
-        data = fetch_jobs_api(slug, offset=offset, limit=PAGE_SIZE)
+        data = fetch_jobs_api(slug, offset=offset, limit=PAGE_SIZE, country=country)
         if not data:
             break
 
@@ -285,6 +265,10 @@ def search_all(
 
     accept_locs, reject_locs = _load_location_filter()
 
+    # Push user country to the SmartRecruiters API so off-country rows never come back.
+    search_cfg = _cfg.load_search_config() or {}
+    api_country = search_cfg.get("country") or None
+
     log.info(
         'SmartRecruiters search: %d employers, "%s", workers=%d',
         len(employers), search_text, workers,
@@ -303,6 +287,7 @@ def search_all(
                 location_filter,
                 accept_locs,
                 reject_locs,
+                api_country,
             ): key
             for key, emp in employers.items()
         }

@@ -68,9 +68,38 @@ class LLMConfig:
     fallback_api_base: str | None = None
 
 
-class ChatMessage(TypedDict):
+class ChatMessage(TypedDict, total=False):
     role: Literal["system", "user", "assistant", "tool"]
     content: str
+    # Optional cache hint. On Anthropic this becomes a cache_control breakpoint
+    # on the resulting content block. On other providers the key is stripped
+    # and identical prefixes are cached implicitly (Gemini/OpenAI) or not at
+    # all (local/Lightning/gemini-cli).
+    cache: Literal["ephemeral"]
+
+
+def _apply_cache_markers(provider: str, messages: list) -> list:
+    """Transform the optional `cache` hint on messages into provider-specific form.
+
+    For Anthropic, a message like `{role, content: str, cache: "ephemeral"}`
+    becomes `{role, content: [{type: "text", text: str, cache_control: {type: "ephemeral"}}]}`.
+    For every other provider the `cache` key is stripped and `content` stays
+    a plain string.
+    """
+    out: list = []
+    for m in messages:
+        if "cache" not in m:
+            out.append(m)
+            continue
+        stripped = {k: v for k, v in m.items() if k != "cache"}
+        if provider == "anthropic":
+            content = stripped.get("content", "")
+            if isinstance(content, str):
+                stripped["content"] = [
+                    {"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}
+                ]
+        out.append(stripped)
+    return out
 
 
 class LiteLLMExtra(TypedDict, total=False):
@@ -268,9 +297,12 @@ class LLMClient:
         if model.startswith("gemini-cli/"):
             return _call_gemini_cli(model, messages, timeout)
 
+        provider = _provider_from_model(model)
+        prepared = _apply_cache_markers(provider, list(messages))
+
         kwargs: dict[str, Any] = {
             "model": model,
-            "messages": messages,
+            "messages": prepared,
             "max_tokens": max_output_tokens,
             "timeout": timeout,
             "num_retries": num_retries,
@@ -380,9 +412,10 @@ class LLMClient:
         and accumulates the chunks into a plain text response.
         """
         try:
+            prepared = _apply_cache_markers(self.provider, list(messages))
             kwargs: dict[str, Any] = {
                 "model": self.model,
-                "messages": messages,
+                "messages": prepared,
                 "max_tokens": max_output_tokens,
                 "num_retries": num_retries,
                 "drop_params": drop_params,
