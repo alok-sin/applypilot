@@ -96,12 +96,34 @@ sites:
 # Restrict the discover stage to a subset of backends. Omit or leave empty to run all.
 # discover_backends: [jobspy, workday, greenhouse, smartrecruiters, smartextract]
 
-# Only crawl employers whose registry entry has matching tags (union). Omit to crawl all.
+# Only crawl employers and direct sites whose registry entry has matching tags (union).
+# Applies to both employers.yaml and sites.yaml. Entries without a `tags:` key always run.
+# Common site tags: india, canada, us, uk, remote, global. Omit to crawl all.
 # discover_tags: [faang, fintech]
 
 # Substring location filters applied to scraped rows (case-insensitive).
+# Both feed the geo_gate helper used at discover/score/tailor/cover stages.
+# - location_reject_non_remote: rejects fire FIRST, even for "remote" strings,
+#   so "Remote - Hong Kong" is rejected when "hong kong" is in the list.
+# - Plain "Remote" / "Anywhere" passes if no reject matches.
+#
 # location_accept: ["United States", "Remote"]
 # location_reject_non_remote: ["India", "Philippines"]
+#
+# ── Profile examples ─────────────────────────────────────────────
+#
+# Single country (India, remote OK inside India):
+#   location_accept: ["India", "Remote"]
+#   location_reject_non_remote: ["United States", "UK", "Hong Kong", "Philippines"]
+#   defaults.blocked_countries: ["united states", "united kingdom", "hong kong"]
+#
+# EU multi-country:
+#   location_accept: ["Germany", "Netherlands", "France", "Ireland", "Spain", "Remote EU", "EMEA"]
+#   location_reject_non_remote: ["United States", "India", "Singapore", "Australia"]
+#
+# US remote-permissive:
+#   location_accept: ["United States", "US", "USA", "Remote", "Anywhere"]
+#   location_reject_non_remote: ["India", "Philippines", "UK only", "EU only"]
 
 # Search defaults
 defaults:
@@ -123,3 +145,13 @@ exclude_titles:
   - "clearance required"
   - "TS/SCI"
   - "principal scientist"
+
+# Optional title allow-list — if set, titles must contain ≥1 of these phrases
+# to pass the rule gate. Case-insensitive substring match. Null/empty titles
+# pass through. `exclude_titles` still wins on conflict (exclude is evaluated first).
+# More sustainable than a blocklist for narrow profiles (BD, design, PM, etc.).
+# title_require_any:
+#   - manager
+#   - director
+#   - business
+#   - sales

@@ -12,13 +12,15 @@ Layer 2 — rule gate:
     rule_evaluate(job, cfg, profile) -> (ok, reason)
 
 `rule_evaluate` returns a reason tag suitable for storing in the `filter_reason`
-column: "seniority_mismatch" | "country_blocked" | "excluded_title" | None.
+column: "seniority_mismatch" | "country_mismatch" | "excluded_title" |
+"title_not_allowed" | None.
 """
 
 from __future__ import annotations
 
 import logging
 import re
+import sqlite3
 from typing import Any
 
 from applypilot import config
@@ -51,12 +53,12 @@ def _location_ok(location: str | None, accept: list[str], reject: list[str]) -> 
 
     loc = location.lower()
 
-    if any(r in loc for r in _REMOTE_TOKENS):
-        return True
-
     for r in reject:
         if r and r.lower() in loc:
             return False
+
+    if any(r in loc for r in _REMOTE_TOKENS):
+        return True
 
     for a in accept:
         if a and a.lower() in loc:
@@ -104,6 +106,20 @@ def title_excluded(title: str | None, exclude_titles: list[str]) -> bool:
     return any(phrase and phrase.lower() in t for phrase in exclude_titles)
 
 
+def title_require_any(title: str | None, required: list[str]) -> bool:
+    """True if title contains at least one required phrase (case-insensitive).
+
+    - required absent/empty → True (feature disabled)
+    - null/empty title → True (lenient, matches title_excluded / country_reject)
+    """
+    if not required:
+        return True
+    if not title:
+        return True
+    t = title.lower()
+    return any(phrase and phrase.lower() in t for phrase in required)
+
+
 def rule_evaluate(job: dict, search_cfg: dict, profile: dict) -> tuple[bool, str | None]:
     """Apply Layer-2 rule gate to a single job row.
 
@@ -113,15 +129,63 @@ def rule_evaluate(job: dict, search_cfg: dict, profile: dict) -> tuple[bool, str
     blocked = search_cfg.get("defaults", {}).get("blocked_countries", []) or []
     floor = int(search_cfg.get("defaults", {}).get("seniority_floor_years", 0) or 0)
     excludes = search_cfg.get("exclude_titles", []) or []
+    required = search_cfg.get("title_require_any", []) or []
     user_years = _parse_years(profile.get("experience", {}).get("years_of_experience_total"))
 
     if title_excluded(job.get("title"), excludes):
         return False, "excluded_title"
 
+    if not title_require_any(job.get("title"), required):
+        return False, "title_not_allowed"
+
     if seniority_reject(job.get("title"), user_years, floor):
         return False, "seniority_mismatch"
 
-    if country_reject(job.get("location"), blocked):
-        return False, "country_blocked"
+    ok, reason = geo_gate(job, search_cfg)
+    if not ok:
+        return False, reason
 
     return True, None
+
+
+def geo_gate(job: dict, search_cfg: dict) -> tuple[bool, str | None]:
+    """Deterministic geography check.
+
+    Combines `defaults.blocked_countries` + `location_accept`/`location_reject_non_remote`.
+    Returns (True, None) if ok, else (False, 'country_mismatch'). Reused by
+    every pipeline stage so geo rejection is deterministic, not LLM-dependent.
+    """
+    blocked = search_cfg.get("defaults", {}).get("blocked_countries", []) or []
+    if country_reject(job.get("location"), blocked):
+        return False, "country_mismatch"
+    accept, reject = _load_location_filter(search_cfg)
+    if not _location_ok(job.get("location"), accept, reject):
+        return False, "country_mismatch"
+    return True, None
+
+
+def apply_geo_gate(
+    jobs: list[dict], search_cfg: dict, conn: sqlite3.Connection
+) -> list[dict]:
+    """Soft-mark geo-mismatched rows and return the survivors.
+
+    Used by scorer/tailor/cover to skip LLM spend on jobs that fail the
+    deterministic geography check.
+    """
+    survivors: list[dict] = []
+    skipped = 0
+    for job in jobs:
+        ok, reason = geo_gate(job, search_cfg)
+        if not ok:
+            conn.execute(
+                "UPDATE jobs SET filter_reason = ?, prefiltered_at = CURRENT_TIMESTAMP "
+                "WHERE url = ? AND filter_reason IS NULL",
+                (reason, job["url"]),
+            )
+            skipped += 1
+        else:
+            survivors.append(job)
+    if skipped:
+        conn.commit()
+        log.info("geo_gate: skipped %d/%d jobs (country_mismatch)", skipped, len(jobs))
+    return survivors

@@ -2,6 +2,11 @@
 # Users can add their own sites following this pattern.
 # Use {location_encoded} placeholder for location (URL-encoded).
 # Use {query_encoded} placeholder for search terms (URL-encoded).
+#
+# Tag vocabulary for `tags:` on each site (OR-match against searches.yaml
+# `discover_tags`). Sites without `tags:` always run (backwards compat).
+#   Region: india, canada, us, uk
+#   Modality: remote (remote-only), global (location-agnostic aggregator)
 
 # ── Manual-Only ATS Domains ──────────────────────────────────────────────
 # These ATS platforms have unsolvable CAPTCHAs. Jobs routing through them
@@ -87,6 +92,7 @@ base_urls:
   "Techstars Jobs": "https://www.techstars.com"
   "Randstad Canada": "https://www.randstad.ca/jobs/search/"
   "Lensa": "https://lensa.com"
+  "4DayWeek": "https://4dayweek.io"
 
 sites:
   # ── Searchable sites (URL includes query + location params) ──────────
@@ -94,153 +100,190 @@ sites:
   - name: "Eluta"
     url: "https://www.eluta.ca/search?q={query_encoded}&l={location_encoded}"
     type: search
+    tags: [canada]
 
   - name: "Talent.com"
     url: "https://www.talent.com/jobs?k={query_encoded}&l={location_encoded}"
     type: search
+    tags: [canada]
 
   - name: "Randstad Canada"
     url: "https://www.randstad.ca/jobs/?keywords={query_encoded}&location={location_encoded}"
     type: search
+    tags: [canada]
 
   - name: "CareerJet Canada"
     url: "https://www.careerjet.ca/search/jobs?s={query_encoded}&l={location_encoded}"
     type: search
+    tags: [canada]
 
   - name: "Job Bank Canada"
     url: "https://www.jobbank.gc.ca/jobsearch/jobsearch?searchstring={query_encoded}&locationstring={location_encoded}&fage=2&sort=D"
     type: search
+    tags: [canada]
 
   # General tech (with search)
   - name: "Dice"
     url: "https://www.dice.com/jobs?q={query_encoded}&location=Remote&pageSize=100"
     type: search
+    tags: [us, remote]
 
   - name: "SimplyHired"
     url: "https://www.simplyhired.com/search?q={query_encoded}&l={location_encoded}"
     type: search
+    tags: [us, remote]
 
   - name: "Lensa"
     url: "https://lensa.com/talent/job-opportunities?flow=comingFromLandingPage&job-title={query_encoded}&remote_jobs=only"
     type: search
+    tags: [us]
 
   - name: "PowerToFly"
     url: "https://powertofly.com/jobs/?keywords={query_encoded}&remote=true"
     type: search
+    tags: [us, remote]
 
   - name: "Techstars Jobs"
     url: "https://jobs.techstars.com/jobs?keywords={query_encoded}"
     type: search
+    tags: [global]
 
   - name: "Startup.jobs"
     url: "https://startup.jobs/?q={query_encoded}&remote=true"
     type: search
+    tags: [global]
 
   - name: "WelcomeToTheJungle"
     url: "https://www.welcometothejungle.com/en/jobs?query={query_encoded}&refinementList%5Bremote%5D%5B%5D=fulltime"
     type: search
+    tags: [us, uk]
 
   # ── Static sites (no query params, scraped once) ─────────────────────
   # Remote-first boards
   - name: "RemoteOK"
     url: "https://remoteok.com/remote-dev-jobs"
     type: static
+    tags: [remote, global]
 
   - name: "WeWorkRemotely"
     url: "https://weworkremotely.com/categories/remote-programming-jobs"
     type: static
+    tags: [remote, global]
 
   - name: "Remotive"
     url: "https://remotive.com/remote-jobs/software-dev"
     type: static
+    tags: [remote, global]
 
   - name: "JustRemote"
     url: "https://justremote.co/remote-developer-jobs"
     type: static
+    tags: [remote, global]
 
   - name: "Himalayas"
     url: "https://himalayas.app/jobs/developer"
     type: static
+    tags: [remote, global]
 
   - name: "Working Nomads"
     url: "https://www.workingnomads.com/jobs?category=development"
     type: static
+    tags: [remote, global]
 
   - name: "Remote.co"
     url: "https://remote.co/remote-jobs/developer/"
     type: static
+    tags: [remote, global]
 
   - name: "Nodesk"
     url: "https://nodesk.co/remote-jobs/"
     type: static
+    tags: [remote, global]
 
   - name: "DynamiteJobs"
     url: "https://dynamitejobs.com/category/remote-development-jobs"
     type: static
+    tags: [remote, global]
 
   - name: "4DayWeek"
     url: "https://4dayweek.io/remote-jobs/software-engineer"
     type: static
+    tags: [remote, global]
 
   # General tech (no search param)
   - name: "Hacker News Jobs"
     url: "https://news.ycombinator.com/jobs"
     type: static
+    tags: [global]
 
   - name: "BuiltIn Remote"
     url: "https://builtin.com/jobs/remote/dev-engineering"
     type: static
+    tags: [global]
 
   - name: "Wellfound"
     url: "https://wellfound.com/role/l/software-engineer/canada"
     type: static
+    tags: [canada]
 
   - name: "Arc.dev"
     url: "https://arc.dev/remote-jobs/developer"
     type: static
+    tags: [remote, global]
 
   - name: "Jobgether"
     url: "https://jobgether.com/remote-jobs/software-engineer"
     type: static
+    tags: [remote, global]
 
   - name: "TopStartups"
     url: "https://topstartups.io/jobs/?job_location=Remote"
     type: static
+    tags: [remote, global]
 
   - name: "Jobspresso"
     url: "https://jobspresso.co/remote-work/remote-software-development/"
     type: static
+    tags: [remote, global]
 
   - name: "FlexJobs"
     url: "https://www.flexjobs.com/remote-jobs/computer-it"
     type: static
+    tags: [us, remote]
 
   - name: "Otta"
     url: "https://otta.com/jobs/all?title=software+engineer&remote=true"
     type: search
+    tags: [remote, global]
 
   # ── HTML-only company career portals (handled by smartextract) ───────
 
   - name: "DocuSign Careers"
     url: "https://hubcareers-docusign.icims.com/jobs/search?ss=1&searchKeyword={query_encoded}"
     type: search
+    tags: [global]
 
   - name: "Uber Careers"
     url: "https://www.uber.com/global/en/careers/list/?query={query_encoded}"
     type: search
+    tags: [global]
 
   - name: "PharmEasy"
     url: "https://pharmeasy.in/careers"
     type: static
+    tags: [india]
 
   - name: "Khatabook"
     url: "https://khatabook.com/careers"
     type: static
+    tags: [india]
 
   - name: "Piramal Finance"
     url: "https://www.piramalfinance.com/careers"
     type: static
+    tags: [india]
 
   - name: "PriceLabs"
     url: "https://pricelabs.freshteam.com/jobs"
     type: static
+    tags: [india]

@@ -13,8 +13,10 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from applypilot import config
 from applypilot.config import COVER_LETTER_DIR, RESUME_PATH, load_profile
 from applypilot.database import get_connection
+from applypilot.discovery.filters import apply_geo_gate
 from applypilot.llm import get_client
 from applypilot.scoring.validator import (
     BANNED_WORDS,
@@ -244,6 +246,11 @@ def run_cover_letters(min_score: int = 7, limit: int = 20,
     if jobs and not isinstance(jobs[0], dict):
         columns = jobs[0].keys()
         jobs = [dict(zip(columns, row)) for row in jobs]
+
+    jobs = apply_geo_gate(jobs, config.load_search_config() or {}, conn)
+    if not jobs:
+        log.info("All cover-letter candidates filtered by geo_gate.")
+        return {"generated": 0, "errors": 0, "elapsed": 0.0}
 
     COVER_LETTER_DIR.mkdir(parents=True, exist_ok=True)
     log.info(

@@ -110,6 +110,12 @@ def resolve_all_urls(conn: sqlite3.Connection) -> dict:
                 conn.execute("DELETE FROM jobs WHERE url = ?", (url,))
                 resolved += 1
         else:
+            conn.execute(
+                "UPDATE jobs SET filter_reason = 'invalid_url', "
+                "prefiltered_at = CURRENT_TIMESTAMP "
+                "WHERE url = ? AND filter_reason IS NULL",
+                (url,),
+            )
             failed += 1
 
     # Also resolve relative application_urls

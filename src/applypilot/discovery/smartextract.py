@@ -1408,14 +1408,17 @@ def run_smart_extract(
     search_cfg = config.load_search_config()
     accept_locs, reject_locs = _load_location_filter(search_cfg)
 
+    sites = sites if sites is not None else load_sites()
+    sites = config.filter_sites_by_tags(sites, search_cfg)
+
     targets = build_scrape_targets(sites=sites, search_cfg=search_cfg)
 
     if not targets:
         log.warning("No scrape targets configured. Create config/sites.yaml and searches.yaml.")
         return {"total_new": 0, "total_existing": 0, "passed": 0, "total": 0}
 
-    search_sites = sum(1 for s in (sites or load_sites()) if s.get("type") == "search")
-    static_sites = sum(1 for s in (sites or load_sites()) if s.get("type") != "search")
+    search_sites = sum(1 for s in sites if s.get("type") == "search")
+    static_sites = sum(1 for s in sites if s.get("type") != "search")
     log.info("Sites: %d searchable, %d static | Total targets: %d (workers=%d)",
              search_sites, static_sites, len(targets), workers)
 

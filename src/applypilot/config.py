@@ -181,6 +181,47 @@ def filter_employers_by_tags(employers: dict, search_cfg: dict | None = None) ->
     return filtered
 
 
+def filter_sites_by_tags(sites: list[dict], search_cfg: dict | None = None) -> list[dict]:
+    """Filter sites list by discover_tags from search config.
+
+    - discover_tags absent or empty → return all (no filtering)
+    - Site has no 'tags' key → always included (backwards compat)
+    - Otherwise: included if any site tag matches any discover_tag (OR)
+    """
+    import logging
+    log = logging.getLogger(__name__)
+
+    if search_cfg is None:
+        search_cfg = load_search_config()
+
+    wanted = search_cfg.get("discover_tags") or []
+    if not wanted:
+        return sites
+
+    wanted_set = {t.lower() for t in wanted}
+    filtered: list[dict] = []
+    all_tags: set[str] = set()
+
+    for site in sites:
+        site_tags = site.get("tags")
+        if site_tags is None:
+            filtered.append(site)
+            continue
+        tag_set = {t.lower() for t in site_tags}
+        all_tags.update(tag_set)
+        if tag_set & wanted_set:
+            filtered.append(site)
+
+    log.info(
+        "Tag filter: %d/%d sites match discover_tags=%s",
+        len(filtered), len(sites), list(wanted_set),
+    )
+    if not filtered:
+        log.warning("No sites matched tags %s. Available tags: %s", list(wanted_set), sorted(all_tags))
+
+    return filtered
+
+
 def load_sites_config() -> dict:
     """Load sites.yaml configuration (sites list, manual_ats, blocked, etc.)."""
     import yaml

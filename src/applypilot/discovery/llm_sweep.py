@@ -29,7 +29,9 @@ SWEEP_SYSTEM = """You are filtering job postings for a candidate.
 
 Reject ONLY if clearly true from the text below:
 - seniority_mismatch: role is clearly junior/entry-level/intern vs the candidate's seniority
-- country_mismatch:   role is in a country/region the candidate can't work in
+- country_mismatch:   the job's location/timezone is incompatible with the candidate's
+                      ACCEPTS/REJECTS list. A remote job posted from or restricted to
+                      a rejected country IS a country_mismatch even if it says "remote".
 - expired:            text explicitly says closed, filled, on hold, or posting is old
 
 If unsure, PASS. Do not reject for minor concerns.
@@ -63,16 +65,47 @@ def _parse_verdict(text: str) -> tuple[str, str]:
     return verdict, reason
 
 
+def format_geo_context(search_cfg: dict, profile: dict) -> str:
+    """Build a reusable geo block for LLM prompts.
+
+    Handles single-country, multi-country, and remote-permissive profiles by
+    surfacing both the accept list and the reject/blocked list verbatim so the
+    model can reason about ambiguous "remote - <country>" strings.
+    """
+    accept = search_cfg.get("location_accept", []) or []
+    reject = search_cfg.get("location_reject_non_remote", []) or []
+    blocked = search_cfg.get("defaults", {}).get("blocked_countries", []) or []
+    remote_locs = [
+        l for l in search_cfg.get("locations", []) or []
+        if isinstance(l, dict) and l.get("remote")
+    ]
+    country = ((profile.get("personal") or {}).get("country")) or "?"
+
+    lines = [f"CANDIDATE COUNTRY: {country}"]
+    if accept:
+        lines.append(f"ACCEPTS LOCATIONS: {', '.join(accept)}")
+    rej_all = list(reject) + [b for b in blocked if b not in reject]
+    if rej_all:
+        lines.append(f"REJECTS LOCATIONS: {', '.join(rej_all)}")
+    if remote_locs:
+        lines.append("REMOTE WORK: acceptable, but only if NOT based in a rejected location")
+    else:
+        lines.append(
+            "REMOTE WORK: acceptable only if the role is explicitly remote AND not "
+            "restricted to a rejected country"
+        )
+    return "\n".join(lines)
+
+
 def _build_user_msg(job: dict, profile: dict, search_cfg: dict) -> str:
-    personal = profile.get("personal", {}) or {}
     exp = profile.get("experience", {}) or {}
     years = exp.get("years_of_experience_total") or "?"
     target = exp.get("target_role") or "?"
-    country = personal.get("country") or "?"
-    remote_ok = "yes" if any(bool(l.get("remote")) for l in search_cfg.get("locations", []) if isinstance(l, dict)) else "unknown"
     desc = (job.get("description") or "")[:800]
+    geo = format_geo_context(search_cfg, profile)
     return (
-        f"CANDIDATE: {years} yrs experience, target role: {target}, country: {country}, remote ok: {remote_ok}.\n\n"
+        f"{geo}\n\n"
+        f"CANDIDATE: {years} yrs experience, target role: {target}.\n\n"
         f"JOB:\n"
         f"TITLE: {job.get('title') or '?'}\n"
         f"LOCATION: {job.get('location') or '(unspecified)'}\n"

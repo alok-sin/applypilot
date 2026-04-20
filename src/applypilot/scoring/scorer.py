@@ -10,8 +10,10 @@ import re
 import time
 from datetime import datetime, timezone
 
+from applypilot import config
 from applypilot.config import RESUME_PATH
 from applypilot.database import get_connection, get_jobs_by_stage, mark_filtered
+from applypilot.discovery.filters import apply_geo_gate
 from applypilot.llm import get_client
 
 log = logging.getLogger(__name__)
@@ -195,6 +197,11 @@ def run_scoring(
     if jobs and not isinstance(jobs[0], dict):
         columns = jobs[0].keys()
         jobs = [dict(zip(columns, row)) for row in jobs]
+
+    jobs = apply_geo_gate(jobs, config.load_search_config() or {}, conn)
+    if not jobs:
+        log.info("All candidate jobs filtered by geo_gate; nothing to score.")
+        return {"scored": 0, "errors": 0, "elapsed": 0.0, "distribution": []}
 
     log.info("Scoring %d jobs sequentially...", len(jobs))
     t0 = time.time()

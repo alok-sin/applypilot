@@ -16,8 +16,10 @@ import re
 import time
 from datetime import datetime, timezone
 
+from applypilot import config
 from applypilot.config import RESUME_PATH, TAILORED_DIR, load_profile
 from applypilot.database import get_connection, get_jobs_by_stage
+from applypilot.discovery.filters import apply_geo_gate
 from applypilot.llm import get_client
 from applypilot.scoring.validator import (
     BANNED_WORDS,
@@ -493,6 +495,15 @@ def run_tailoring(min_score: int = 7, limit: int = 20,
 
     if not jobs:
         log.info("No untailored jobs with score >= %d.", min_score)
+        return {"approved": 0, "failed": 0, "errors": 0, "elapsed": 0.0}
+
+    if jobs and not isinstance(jobs[0], dict):
+        columns = jobs[0].keys()
+        jobs = [dict(zip(columns, row)) for row in jobs]
+
+    jobs = apply_geo_gate(jobs, config.load_search_config() or {}, conn)
+    if not jobs:
+        log.info("All tailor candidates filtered by geo_gate.")
         return {"approved": 0, "failed": 0, "errors": 0, "elapsed": 0.0}
 
     TAILORED_DIR.mkdir(parents=True, exist_ok=True)
