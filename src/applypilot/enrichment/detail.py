@@ -22,7 +22,9 @@ from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 
+from applypilot.config import load_profile, load_search_config
 from applypilot.database import init_db
+from applypilot.discovery.filters import apply_rule_gate
 from applypilot.llm import get_client
 
 log = logging.getLogger(__name__)
@@ -702,6 +704,32 @@ def scrape_site_batch(
     return stats
 
 
+def _inline_rule_gate(rows: list, conn: sqlite3.Connection) -> list:
+    """Soft-mark rule-gate rejects among `rows` and return the survivors.
+
+    `rows` is a list of (url, title, site, location, ...) sqlite rows. Saves
+    browser/LLM spend on titles/locations that would be rejected after
+    enrichment anyway. Config/profile errors are allowed to propagate;
+    anything else is logged with a traceback and treated as a pass-through
+    so a bad rule-gate call can't silently block all enrichment.
+    """
+    search_cfg = load_search_config() or {}
+    try:
+        profile = load_profile()
+    except FileNotFoundError:
+        profile = {}
+    try:
+        jobs_for_gate = [
+            {"url": r[0], "title": r[1], "site": r[2], "location": r[3]} for r in rows
+        ]
+        survivors = apply_rule_gate(jobs_for_gate, search_cfg, profile, conn)
+        survivor_urls = {j["url"] for j in survivors}
+        return [r for r in rows if r[0] in survivor_urls]
+    except Exception:
+        log.exception("Rule gate inline check failed; enriching unfiltered rows")
+        return rows
+
+
 def _run_detail_scraper(
     conn: sqlite3.Connection,
     sites: list[str] | None = None,
@@ -720,12 +748,17 @@ def _run_detail_scraper(
     _skip = _skip_detail_sites()
     placeholders = ",".join("?" * len(_skip))
     rows = conn.execute(
-        f"SELECT url, title, site FROM jobs WHERE detail_scraped_at IS NULL AND filter_reason IS NULL AND site NOT IN ({placeholders}) ORDER BY site",
+        f"SELECT url, title, site, location FROM jobs WHERE detail_scraped_at IS NULL AND filter_reason IS NULL AND site NOT IN ({placeholders}) ORDER BY site",
         list(_skip),
     ).fetchall()
 
     if not rows:
         log.info("No pending jobs to scrape.")
+        return {"processed": 0, "ok": 0, "partial": 0, "error": 0}
+
+    rows = _inline_rule_gate(rows, conn)
+    if not rows:
+        log.info("No pending jobs to scrape (all filtered by rule gate).")
         return {"processed": 0, "ok": 0, "partial": 0, "error": 0}
 
     site_jobs: dict[str, list[tuple]] = {}
@@ -833,9 +866,14 @@ def stream_detail(
             _skip = _skip_detail_sites()
             placeholders = ",".join("?" * len(_skip))
             rows = conn.execute(
-                f"SELECT url, title, site FROM jobs WHERE detail_scraped_at IS NULL AND filter_reason IS NULL AND site NOT IN ({placeholders}) ORDER BY site LIMIT 200",
+                f"SELECT url, title, site, location FROM jobs WHERE detail_scraped_at IS NULL AND filter_reason IS NULL AND site NOT IN ({placeholders}) ORDER BY site LIMIT 200",
                 list(_skip),
             ).fetchall()
+
+            if rows:
+                rows = _inline_rule_gate(rows, conn)
+                if not rows:
+                    log.info("All pending rows filtered by rule gate this tick.")
 
             if rows:
                 site_jobs: dict[str, list[tuple]] = {}

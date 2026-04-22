@@ -189,3 +189,33 @@ def apply_geo_gate(
         conn.commit()
         log.info("geo_gate: skipped %d/%d jobs (country_mismatch)", skipped, len(jobs))
     return survivors
+
+
+def apply_rule_gate(
+    jobs: list[dict], search_cfg: dict, profile: dict, conn: sqlite3.Connection
+) -> list[dict]:
+    """Run the full rule gate across `jobs`, soft-marking rejects and returning survivors.
+
+    Unlike `_run_rule_gate` in the pipeline, this operates on any caller-supplied
+    list — enrichment uses it to catch rows the discovery-time gate never saw
+    (e.g. rescrape, standalone `enrich`, or rows that were enriched before the
+    gate tightened).
+    """
+    survivors: list[dict] = []
+    by_reason: dict[str, int] = {}
+    for job in jobs:
+        ok, reason = rule_evaluate(job, search_cfg, profile)
+        if not ok:
+            conn.execute(
+                "UPDATE jobs SET filter_reason = ?, prefiltered_at = CURRENT_TIMESTAMP "
+                "WHERE url = ? AND filter_reason IS NULL",
+                (reason, job["url"]),
+            )
+            by_reason[reason or "unknown"] = by_reason.get(reason or "unknown", 0) + 1
+        else:
+            survivors.append(job)
+    if by_reason:
+        conn.commit()
+        summary = ", ".join(f"{k}={v}" for k, v in sorted(by_reason.items()))
+        log.info("rule_gate: skipped %d/%d jobs (%s)", sum(by_reason.values()), len(jobs), summary)
+    return survivors

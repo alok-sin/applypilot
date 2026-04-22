@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from applypilot import config
 from applypilot.config import RESUME_PATH
 from applypilot.database import get_connection, get_jobs_by_stage, mark_filtered
-from applypilot.discovery.filters import apply_geo_gate
+from applypilot.discovery.filters import apply_rule_gate
 from applypilot.llm import get_client
 
 log = logging.getLogger(__name__)
@@ -198,9 +198,14 @@ def run_scoring(
         columns = jobs[0].keys()
         jobs = [dict(zip(columns, row)) for row in jobs]
 
-    jobs = apply_geo_gate(jobs, config.load_search_config() or {}, conn)
+    search_cfg = config.load_search_config() or {}
+    try:
+        profile = config.load_profile()
+    except FileNotFoundError:
+        profile = {}
+    jobs = apply_rule_gate(jobs, search_cfg, profile, conn)
     if not jobs:
-        log.info("All candidate jobs filtered by geo_gate; nothing to score.")
+        log.info("All candidate jobs filtered by rule gate; nothing to score.")
         return {"scored": 0, "errors": 0, "elapsed": 0.0, "distribution": []}
 
     log.info("Scoring %d jobs sequentially...", len(jobs))

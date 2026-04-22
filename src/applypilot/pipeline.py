@@ -236,8 +236,7 @@ def _run_rule_gate() -> str:
 
         conn = get_connection()
         rows = conn.execute(
-            "SELECT url, title, location FROM jobs "
-            "WHERE filter_reason IS NULL AND detail_scraped_at IS NULL"
+            "SELECT url, title, location FROM jobs WHERE filter_reason IS NULL"
         ).fetchall()
 
         rejected = 0
