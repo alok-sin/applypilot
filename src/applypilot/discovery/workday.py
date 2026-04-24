@@ -19,10 +19,16 @@ from html.parser import HTMLParser
 
 import yaml
 
+from typing import TYPE_CHECKING
+
 from applypilot import config
 from applypilot.config import CONFIG_DIR
-from applypilot.database import get_connection, init_db
+from applypilot.core import build_default_run_context
+from applypilot.database import init_db_for_ctx
 from applypilot.discovery.filters import _load_location_filter, _location_ok
+
+if TYPE_CHECKING:
+    from applypilot.core import RunContext
 
 log = logging.getLogger(__name__)
 
@@ -346,9 +352,12 @@ def _process_one(
     accept_locs: list[str],
     reject_locs: list[str],
     max_hours: int | None = None,
+    *,
+    ctx: "RunContext",
 ) -> dict:
     """Search one employer, fetch details, store results."""
     emp = employers[employer_key]
+    conn = ctx.user.db.connection()
 
     try:
         jobs = search_employer(
@@ -372,7 +381,6 @@ def _process_one(
     except Exception as e:
         log.error("%s: ERROR fetching details for '%s': %s", emp["name"], search_text, e)
 
-    conn = get_connection()
     new, existing = store_results(conn, jobs, employers)
     log.info("%s: %d new, %d already in DB", emp["name"], new, existing)
 
@@ -392,6 +400,8 @@ def scrape_employers(
     reject_locs: list[str] | None = None,
     workers: int = 1,
     max_hours: int | None = None,
+    *,
+    ctx: "RunContext | None" = None,
 ) -> dict:
     """Run full scrape: search -> filter -> detail -> store.
 
@@ -406,8 +416,9 @@ def scrape_employers(
     if reject_locs is None:
         reject_locs = []
 
-    # Ensure DB schema
-    init_db()
+    if ctx is None:
+        ctx = build_default_run_context()
+    init_db_for_ctx(ctx)
 
     total_new = 0
     total_existing = 0
@@ -425,6 +436,7 @@ def scrape_employers(
                 pool.submit(
                     _process_one, key, employers, search_text,
                     location_filter, accept_locs, reject_locs, max_hours,
+                    ctx=ctx,
                 ): key
                 for key in valid_keys
             }
@@ -448,6 +460,7 @@ def scrape_employers(
             result = _process_one(
                 key, employers, search_text,
                 location_filter, accept_locs, reject_locs, max_hours,
+                ctx=ctx,
             )
             completed += 1
             total_new += result["new"]
@@ -470,7 +483,11 @@ def scrape_employers(
 
 # -- Public entry point ------------------------------------------------------
 
-def run_workday_discovery(employers: dict | None = None, workers: int = 1) -> dict:
+def run_workday_discovery(
+    employers: dict | None = None,
+    workers: int = 1,
+    ctx: "RunContext | None" = None,
+) -> dict:
     """Main entry point for Workday-based corporate job discovery.
 
     Loads employer registry from config/employers.yaml (or uses the provided
@@ -480,14 +497,18 @@ def run_workday_discovery(employers: dict | None = None, workers: int = 1) -> di
     Args:
         employers: Override the employer registry. If None, loads from YAML.
         workers: Number of parallel threads for employer scraping. Default 1 (sequential).
+        ctx: Run context; a default local one is built if None.
 
     Returns:
         Dict with stats: found, new, existing, queries.
     """
+    if ctx is None:
+        ctx = build_default_run_context()
+
     if employers is None:
         employers = load_employers()
 
-    search_cfg = config.load_search_config()
+    search_cfg = ctx.user.search_config or {}
     employers = config.filter_employers_by_tags(employers, search_cfg)
 
     if not employers:
@@ -531,6 +552,7 @@ def run_workday_discovery(employers: dict | None = None, workers: int = 1) -> di
             reject_locs=reject_locs,
             workers=workers,
             max_hours=max_hours,
+            ctx=ctx,
         )
         grand_new += result["new"]
         grand_existing += result["existing"]

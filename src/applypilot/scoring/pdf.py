@@ -6,8 +6,12 @@ and exports to PDF using headless Chromium via Playwright.
 
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from applypilot.config import TAILORED_DIR
+from applypilot.core import build_default_run_context
+
+if TYPE_CHECKING:
+    from applypilot.core import RunContext
 
 log = logging.getLogger(__name__)
 
@@ -428,23 +432,29 @@ def convert_text_to_pdf(
     return out
 
 
-def batch_convert(limit: int = 50) -> int:
-    """Convert .txt files in TAILORED_DIR that don't have corresponding PDFs.
+def batch_convert(limit: int = 50, ctx: "RunContext | None" = None) -> int:
+    """Convert .txt files in the tailored directory that don't have PDFs.
 
     Scans for .txt files (excluding _JOB.txt and _REPORT.json), checks if a
     .pdf with the same stem already exists, and converts any that are missing.
 
     Args:
         limit: Maximum number of files to convert.
+        ctx:   Optional :class:`RunContext`. When ``None`` a CLI-default
+            context is built from ``APP_DIR``.
 
     Returns:
         Number of PDFs generated.
     """
-    if not TAILORED_DIR.exists():
-        log.warning("Tailored directory does not exist: %s", TAILORED_DIR)
+    if ctx is None:
+        ctx = build_default_run_context()
+    tailored_dir = ctx.user.storage.tailored_dir()
+
+    if not tailored_dir.exists():
+        log.warning("Tailored directory does not exist: %s", tailored_dir)
         return 0
 
-    txt_files = sorted(TAILORED_DIR.glob("*.txt"))
+    txt_files = sorted(tailored_dir.glob("*.txt"))
     # Exclude _JOB.txt and _CL.txt files from resume conversion
     # (they get their own conversion calls)
     candidates = [
@@ -488,5 +498,5 @@ def batch_convert(limit: int = 50) -> int:
         finally:
             browser.close()
 
-    log.info("Done: %d/%d PDFs generated in %s", converted, len(to_convert), TAILORED_DIR)
+    log.info("Done: %d/%d PDFs generated in %s", converted, len(to_convert), tailored_dir)
     return converted

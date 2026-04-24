@@ -17,24 +17,33 @@ from pathlib import Path
 
 from rich.console import Console
 
+from typing import TYPE_CHECKING
+
 from applypilot.config import APP_DIR
-from applypilot.database import get_connection
+from applypilot.core import build_default_run_context
+
+if TYPE_CHECKING:
+    from applypilot.core import RunContext
 
 console = Console()
 
 
-def generate_dashboard(output_path: str | None = None) -> str:
+def generate_dashboard(output_path: str | None = None,
+                       ctx: "RunContext | None" = None) -> str:
     """Generate an HTML dashboard of all jobs with fit scores.
 
     Args:
         output_path: Where to write the HTML file. Defaults to ~/.applypilot/dashboard.html.
+        ctx: Run context; a default local one is built if None.
 
     Returns:
         Absolute path to the generated HTML file.
     """
     out = Path(output_path) if output_path else APP_DIR / "dashboard.html"
 
-    conn = get_connection()
+    if ctx is None:
+        ctx = build_default_run_context()
+    conn = ctx.user.db.connection()
 
     # Stats
     total = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
@@ -688,12 +697,14 @@ applyFilters();
     return abs_path
 
 
-def open_dashboard(output_path: str | None = None) -> None:
+def open_dashboard(output_path: str | None = None,
+                   ctx: "RunContext | None" = None) -> None:
     """Generate the dashboard and open it in the default browser.
 
     Args:
         output_path: Where to write the HTML file. Defaults to ~/.applypilot/dashboard.html.
+        ctx: Run context; a default local one is built if None.
     """
-    path = generate_dashboard(output_path)
+    path = generate_dashboard(output_path, ctx=ctx)
     console.print("[dim]Opening in browser...[/dim]")
     webbrowser.open(f"file:///{path}")

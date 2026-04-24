@@ -17,9 +17,13 @@ import re
 import time
 from datetime import datetime, timezone
 
-from applypilot import config
-from applypilot.database import get_connection
-from applypilot.llm import get_client
+from typing import TYPE_CHECKING
+
+from applypilot.core import build_default_run_context
+from applypilot.llm import get_client_for_ctx
+
+if TYPE_CHECKING:
+    from applypilot.core import RunContext
 
 log = logging.getLogger(__name__)
 
@@ -113,7 +117,7 @@ def _build_user_msg(job: dict, profile: dict, search_cfg: dict) -> str:
     )
 
 
-def run_llm_sweep(limit: int = 0) -> dict:
+def run_llm_sweep(limit: int = 0, ctx: "RunContext | None" = None) -> dict:
     """Classify pending discovered rows via a tiny LLM call; mark rejects.
 
     Processes rows where `filter_reason IS NULL AND detail_scraped_at IS NULL
@@ -122,19 +126,20 @@ def run_llm_sweep(limit: int = 0) -> dict:
 
     Returns: {"checked": n, "rejected": n, "errors": n, "elapsed": s}
     """
-    search_cfg = config.load_search_config() or {}
+    if ctx is None:
+        ctx = build_default_run_context()
+    search_cfg = ctx.user.search_config or {}
     defaults = search_cfg.get("defaults", {}) or {}
     if not defaults.get("llm_sweep_enabled", True):
         log.info("LLM sweep disabled (defaults.llm_sweep_enabled=false)")
         return {"checked": 0, "rejected": 0, "errors": 0, "elapsed": 0.0, "skipped": True}
 
-    try:
-        profile = config.load_profile()
-    except FileNotFoundError:
+    profile = ctx.user.profile or {}
+    if not profile:
         log.warning("No profile found — LLM sweep needs a profile to compare against; skipping.")
         return {"checked": 0, "rejected": 0, "errors": 0, "elapsed": 0.0, "skipped": True}
 
-    conn = get_connection()
+    conn = ctx.user.db.connection()
     query = (
         "SELECT url, title, location, description FROM jobs "
         "WHERE filter_reason IS NULL AND detail_scraped_at IS NULL AND prefiltered_at IS NULL"
@@ -149,7 +154,7 @@ def run_llm_sweep(limit: int = 0) -> dict:
         log.info("LLM sweep: no pending rows.")
         return {"checked": 0, "rejected": 0, "errors": 0, "elapsed": 0.0}
 
-    client = get_client("prefilter")
+    client = get_client_for_ctx(ctx, "prefilter")
     log.info("LLM sweep: classifying %d candidate(s) via task=prefilter", len(rows))
 
     t0 = time.time()

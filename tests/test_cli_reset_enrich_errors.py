@@ -2,17 +2,31 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 
 from typer.testing import CliRunner
 
 import applypilot.cli as cli
-import applypilot.database as database
 import applypilot.pipeline as pipeline
 from applypilot.database import close_connection, init_db
 
 
 runner = CliRunner()
+
+
+def _fake_ctx(conn):
+    class _FakeDB:
+        def __init__(self, c):
+            self._c = c
+
+        def connection(self):
+            return self._c
+
+    return SimpleNamespace(
+        user=SimpleNamespace(db=_FakeDB(conn), profile={}, search_config={}, resume_text=""),
+        task=SimpleNamespace(),
+    )
 
 
 def _make_test_dir() -> Path:
@@ -38,8 +52,7 @@ def test_run_reset_enrich_errors_clears_error_state(monkeypatch) -> None:
         )
         conn.commit()
 
-        monkeypatch.setattr(cli, "_bootstrap", lambda: None)
-        monkeypatch.setattr(database, "get_connection", lambda: conn)
+        monkeypatch.setattr(cli, "_bootstrap", lambda: _fake_ctx(conn))
         monkeypatch.setattr(pipeline, "run_pipeline", lambda **kwargs: {"errors": {}})
 
         result = runner.invoke(cli.app, ["run", "enrich", "--reset-enrich-errors", "--dry-run"])

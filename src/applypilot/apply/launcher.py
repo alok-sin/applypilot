@@ -23,9 +23,14 @@ from pathlib import Path
 from rich.console import Console
 from rich.live import Live
 
+from typing import TYPE_CHECKING
+
 from applypilot import config
-from applypilot.database import get_connection
+from applypilot.core import build_default_run_context
 from applypilot.apply import prompt as prompt_mod
+
+if TYPE_CHECKING:
+    from applypilot.core import RunContext
 from applypilot.apply.chrome import (
     launch_chrome, cleanup_worker, kill_all_chrome,
     reset_worker_dir, cleanup_on_exit, _kill_process_tree,
@@ -88,18 +93,22 @@ def _make_mcp_config(cdp_port: int) -> dict:
 # ---------------------------------------------------------------------------
 
 def acquire_job(target_url: str | None = None, min_score: int = 7,
-                worker_id: int = 0) -> dict | None:
+                worker_id: int = 0,
+                ctx: "RunContext | None" = None) -> dict | None:
     """Atomically acquire the next job to apply to.
 
     Args:
         target_url: Apply to a specific URL instead of picking from queue.
         min_score: Minimum fit_score threshold.
         worker_id: Worker claiming this job (for tracking).
+        ctx: Run context; a default local one is built if None.
 
     Returns:
         Job dict or None if the queue is empty.
     """
-    conn = get_connection()
+    if ctx is None:
+        ctx = build_default_run_context()
+    conn = ctx.user.db.connection()
     for attempt in range(3):
         try:
             conn.execute("BEGIN IMMEDIATE")
@@ -184,9 +193,12 @@ def acquire_job(target_url: str | None = None, min_score: int = 7,
 
 def mark_result(url: str, status: str, error: str | None = None,
                 permanent: bool = False, duration_ms: int | None = None,
-                task_id: str | None = None) -> None:
+                task_id: str | None = None,
+                ctx: "RunContext | None" = None) -> None:
     """Update a job's apply status in the database."""
-    conn = get_connection()
+    if ctx is None:
+        ctx = build_default_run_context()
+    conn = ctx.user.db.connection()
     now = datetime.now(timezone.utc).isoformat()
     if status == "applied":
         conn.execute("""
@@ -213,9 +225,11 @@ def mark_result(url: str, status: str, error: str | None = None,
     conn.commit()
 
 
-def release_lock(url: str) -> None:
+def release_lock(url: str, ctx: "RunContext | None" = None) -> None:
     """Release the in_progress lock without changing status."""
-    conn = get_connection()
+    if ctx is None:
+        ctx = build_default_run_context()
+    conn = ctx.user.db.connection()
     conn.execute(
         "UPDATE jobs SET apply_status = NULL, agent_id = NULL WHERE url = ? AND apply_status = 'in_progress'",
         (url,),
@@ -228,13 +242,17 @@ def release_lock(url: str) -> None:
 # ---------------------------------------------------------------------------
 
 def gen_prompt(target_url: str, min_score: int = 7,
-               model: str = "sonnet", worker_id: int = 0) -> Path | None:
+               model: str = "sonnet", worker_id: int = 0,
+               ctx: "RunContext | None" = None) -> Path | None:
     """Generate a prompt file and print the Claude CLI command for manual debugging.
 
     Returns:
         Path to the generated prompt file, or None if no job found.
     """
-    job = acquire_job(target_url=target_url, min_score=min_score, worker_id=worker_id)
+    if ctx is None:
+        ctx = build_default_run_context()
+    job = acquire_job(target_url=target_url, min_score=min_score,
+                      worker_id=worker_id, ctx=ctx)
     if not job:
         return None
 
@@ -245,10 +263,10 @@ def gen_prompt(target_url: str, min_score: int = 7,
     if txt_path and txt_path.exists():
         resume_text = txt_path.read_text(encoding="utf-8")
 
-    prompt = prompt_mod.build_prompt(job=job, tailored_resume=resume_text)
+    prompt = prompt_mod.build_prompt(job=job, tailored_resume=resume_text, ctx=ctx)
 
     # Release the lock so the job stays available
-    release_lock(job["url"])
+    release_lock(job["url"], ctx=ctx)
 
     # Write prompt file
     config.ensure_dirs()
@@ -264,7 +282,8 @@ def gen_prompt(target_url: str, min_score: int = 7,
     return prompt_file
 
 
-def mark_job(url: str, status: str, reason: str | None = None) -> None:
+def mark_job(url: str, status: str, reason: str | None = None,
+             ctx: "RunContext | None" = None) -> None:
     """Manually mark a job's apply status in the database.
 
     Args:
@@ -272,7 +291,9 @@ def mark_job(url: str, status: str, reason: str | None = None) -> None:
         status: Either 'applied' or 'failed'.
         reason: Failure reason (only for status='failed').
     """
-    conn = get_connection()
+    if ctx is None:
+        ctx = build_default_run_context()
+    conn = ctx.user.db.connection()
     now = datetime.now(timezone.utc).isoformat()
     if status == "applied":
         conn.execute("""
@@ -289,13 +310,15 @@ def mark_job(url: str, status: str, reason: str | None = None) -> None:
     conn.commit()
 
 
-def reset_failed() -> int:
+def reset_failed(ctx: "RunContext | None" = None) -> int:
     """Reset all failed jobs so they can be retried.
 
     Returns:
         Number of jobs reset.
     """
-    conn = get_connection()
+    if ctx is None:
+        ctx = build_default_run_context()
+    conn = ctx.user.db.connection()
     cursor = conn.execute("""
         UPDATE jobs SET apply_status = NULL, apply_error = NULL,
                        apply_attempts = 0, agent_id = NULL
@@ -307,9 +330,11 @@ def reset_failed() -> int:
     return cursor.rowcount
 
 
-def remove_expired() -> int:
+def remove_expired(ctx: "RunContext | None" = None) -> int:
     """Remove expired jobs from the database."""
-    conn = get_connection()
+    if ctx is None:
+        ctx = build_default_run_context()
+    conn = ctx.user.db.connection()
     cursor = conn.execute(
         """
         DELETE FROM jobs
@@ -321,9 +346,11 @@ def remove_expired() -> int:
     return cursor.rowcount
 
 
-def reset_in_progress() -> int:
+def reset_in_progress(ctx: "RunContext | None" = None) -> int:
     """Clear stale in-progress apply locks."""
-    conn = get_connection()
+    if ctx is None:
+        ctx = build_default_run_context()
+    conn = ctx.user.db.connection()
     cursor = conn.execute(
         """
         UPDATE jobs
@@ -340,7 +367,8 @@ def reset_in_progress() -> int:
 # ---------------------------------------------------------------------------
 
 def run_job(job: dict, port: int, worker_id: int = 0,
-            model: str = "sonnet", dry_run: bool = False) -> tuple[str, int]:
+            model: str = "sonnet", dry_run: bool = False,
+            ctx: "RunContext | None" = None) -> tuple[str, int]:
     """Spawn a Claude Code session for one job application.
 
     Returns:
@@ -355,11 +383,15 @@ def run_job(job: dict, port: int, worker_id: int = 0,
     if txt_path and txt_path.exists():
         resume_text = txt_path.read_text(encoding="utf-8")
 
+    if ctx is None:
+        ctx = build_default_run_context()
+
     # Build the prompt
     agent_prompt = prompt_mod.build_prompt(
         job=job,
         tailored_resume=resume_text,
         dry_run=dry_run,
+        ctx=ctx,
     )
 
     # Write per-worker MCP config
@@ -392,7 +424,7 @@ def run_job(job: dict, port: int, worker_id: int = 0,
     env.pop("CLAUDECODE", None)
     env.pop("CLAUDE_CODE_ENTRYPOINT", None)
 
-    profile = config.load_profile()
+    profile = ctx.user.profile or {}
     pwd = profile.get("personal", {}).get("password", "")
     if pwd:
         env["APPLYPILOT_SITE_PASSWORD"] = pwd
@@ -598,7 +630,8 @@ def _is_permanent_failure(result: str) -> bool:
 def worker_loop(worker_id: int = 0, limit: int = 1,
                 target_url: str | None = None,
                 min_score: int = 7, headless: bool = False,
-                model: str = "sonnet", dry_run: bool = False) -> tuple[int, int]:
+                model: str = "sonnet", dry_run: bool = False,
+                ctx: "RunContext | None" = None) -> tuple[int, int]:
     """Run jobs sequentially until limit is reached or queue is empty.
 
     Args:
@@ -613,6 +646,9 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
     Returns:
         Tuple of (applied_count, failed_count).
     """
+    if ctx is None:
+        ctx = build_default_run_context()
+
     applied = 0
     failed = 0
     continuous = limit == 0
@@ -628,7 +664,7 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
                      last_action="waiting for job", actions=0)
 
         job = acquire_job(target_url=target_url, min_score=min_score,
-                          worker_id=worker_id)
+                          worker_id=worker_id, ctx=ctx)
         if not job:
             if not continuous:
                 add_event(f"[W{worker_id}] Queue empty")
@@ -652,14 +688,15 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
             chrome_proc = launch_chrome(worker_id, port=port, headless=headless)
 
             result, duration_ms = run_job(job, port=port, worker_id=worker_id,
-                                            model=model, dry_run=dry_run)
+                                            model=model, dry_run=dry_run,
+                                            ctx=ctx)
 
             if result == "skipped":
-                release_lock(job["url"])
+                release_lock(job["url"], ctx=ctx)
                 add_event(f"[W{worker_id}] Skipped: {job['title'][:30]}")
                 continue
             elif result == "applied":
-                mark_result(job["url"], "applied", duration_ms=duration_ms)
+                mark_result(job["url"], "applied", duration_ms=duration_ms, ctx=ctx)
                 applied += 1
                 update_state(worker_id, jobs_applied=applied,
                              jobs_done=applied + failed)
@@ -667,13 +704,13 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
                 reason = result.split(":", 1)[-1] if ":" in result else result
                 mark_result(job["url"], "failed", reason,
                             permanent=_is_permanent_failure(result),
-                            duration_ms=duration_ms)
+                            duration_ms=duration_ms, ctx=ctx)
                 failed += 1
                 update_state(worker_id, jobs_failed=failed,
                              jobs_done=applied + failed)
 
         except KeyboardInterrupt:
-            release_lock(job["url"])
+            release_lock(job["url"], ctx=ctx)
             if _stop_event.is_set():
                 break
             add_event(f"[W{worker_id}] Job skipped (Ctrl+C)")
@@ -681,7 +718,7 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
         except Exception as e:
             logger.exception("Worker %d launcher error", worker_id)
             add_event(f"[W{worker_id}] Launcher error: {str(e)[:40]}")
-            release_lock(job["url"])
+            release_lock(job["url"], ctx=ctx)
             failed += 1
             update_state(worker_id, jobs_failed=failed)
         finally:
@@ -703,7 +740,8 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
 def main(limit: int = 1, target_url: str | None = None,
          min_score: int = 7, headless: bool = False, model: str = "sonnet",
          dry_run: bool = False, continuous: bool = False,
-         poll_interval: int = 60, workers: int = 1) -> None:
+         poll_interval: int = 60, workers: int = 1,
+         ctx: "RunContext | None" = None) -> None:
     """Launch the apply pipeline.
 
     Args:
@@ -720,6 +758,9 @@ def main(limit: int = 1, target_url: str | None = None,
     global POLL_INTERVAL
     POLL_INTERVAL = poll_interval
     _stop_event.clear()
+
+    if ctx is None:
+        ctx = build_default_run_context()
 
     config.ensure_dirs()
     console = Console()
@@ -787,6 +828,7 @@ def main(limit: int = 1, target_url: str | None = None,
                     headless=headless,
                     model=model,
                     dry_run=dry_run,
+                    ctx=ctx,
                 )
             else:
                 # Multi-worker — distribute limit across workers
@@ -810,6 +852,7 @@ def main(limit: int = 1, target_url: str | None = None,
                             headless=headless,
                             model=model,
                             dry_run=dry_run,
+                            ctx=ctx,
                         ): i
                         for i in range(workers)
                     }

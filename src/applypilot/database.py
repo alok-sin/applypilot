@@ -9,8 +9,12 @@ import sqlite3
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from applypilot.config import DB_PATH, DEFAULTS
+
+if TYPE_CHECKING:
+    from applypilot.core.context import RunContext
 
 # Thread-local connection storage — each thread gets its own connection
 # (required for SQLite thread safety with parallel workers)
@@ -70,34 +74,17 @@ def close_all_connections() -> None:
         _local.connections.clear()
 
 
-def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
-    """Create the full jobs table with all columns from every pipeline stage.
+def init_schema(conn: sqlite3.Connection) -> sqlite3.Connection:
+    """Create the jobs table + forward-migrate columns on this connection.
 
-    This is idempotent -- safe to call on every startup. Uses CREATE TABLE IF NOT EXISTS
-    so it won't destroy existing data.
+    Pure: takes any :class:`sqlite3.Connection` (local file, in-memory,
+    spoke-supplied). No path handling, no module-globals. Safe to call
+    repeatedly — uses ``CREATE TABLE IF NOT EXISTS`` and additive
+    ``ensure_columns`` so it won't destroy existing data.
 
-    Schema columns by stage:
-      - Discovery:  url, title, salary, description, location, site, strategy, discovered_at
-      - Enrichment: full_description, application_url, detail_scraped_at, detail_error
-      - Scoring:    fit_score, score_reasoning, scored_at
-      - Tailoring:  tailored_resume_path, tailored_at, tailor_attempts
-      - Cover:      cover_letter_path, cover_letter_at, cover_attempts
-      - Apply:      applied_at, apply_status, apply_error, apply_attempts,
-                   agent_id, last_attempted_at, apply_duration_ms, apply_task_id,
-                   verification_confidence
-
-    Args:
-        db_path: Override the default DB_PATH.
-
-    Returns:
-        sqlite3.Connection with the schema initialized.
+    Prefer this over :func:`init_db` when you have a connection in hand
+    (for example from :attr:`RunContext.user.db`).
     """
-    path = db_path or DB_PATH
-
-    # Ensure parent directory exists
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-
-    conn = get_connection(path)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS jobs (
             -- Discovery stage (smart_extract / job_search)
@@ -145,11 +132,30 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
         )
     """)
     conn.commit()
-
-    # Run migrations for any columns added after initial schema
     ensure_columns(conn)
-
     return conn
+
+
+def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
+    """Module-global wrapper: init schema at ``db_path`` (or ``DB_PATH``).
+
+    Kept for today's CLI callers. New code should prefer
+    :func:`init_db_for_ctx`, which scopes to a :class:`RunContext` instead
+    of process state.
+    """
+    path = db_path or DB_PATH
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    return init_schema(get_connection(path))
+
+
+def init_db_for_ctx(ctx: "RunContext") -> sqlite3.Connection:
+    """Initialize the jobs schema on this ctx's :attr:`Database`."""
+    return init_schema(ctx.user.db.connection())
+
+
+def get_stats_for_ctx(ctx: "RunContext") -> dict:
+    """Return :func:`get_stats` scoped to this ctx's :attr:`Database`."""
+    return get_stats(ctx.user.db.connection())
 
 
 # Complete column registry: column_name -> SQL type with optional default.

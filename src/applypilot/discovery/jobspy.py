@@ -11,11 +11,15 @@ import logging
 import sqlite3
 import time
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 from jobspy import scrape_jobs
 
-from applypilot import config
-from applypilot.database import get_connection, init_db
+from applypilot.core import build_default_run_context
+from applypilot.database import init_db_for_ctx
+
+if TYPE_CHECKING:
+    from applypilot.core import RunContext
 
 log = logging.getLogger(__name__)
 
@@ -198,6 +202,7 @@ def _run_one_search(
     accept_locs: list[str],
     reject_locs: list[str],
     glassdoor_map: dict,
+    conn: sqlite3.Connection,
 ) -> dict:
     """Run a single search query and store results in DB."""
     s = search
@@ -279,7 +284,6 @@ def _run_one_search(
     ), axis=1)]
     filtered = before - len(df)
 
-    conn = get_connection()
     new, existing = store_jobspy_results(conn, df, s["query"])
 
     msg = f"[{label}] {before} results -> {new} new, {existing} dupes"
@@ -301,8 +305,11 @@ def search_jobs(
     hours_old: int = 72,
     proxy: str | None = None,
     country_indeed: str = "usa",
+    ctx: "RunContext | None" = None,
 ) -> dict:
     """Run a single job search via JobSpy and store results in DB."""
+    if ctx is None:
+        ctx = build_default_run_context()
     if sites is None:
         sites = ["indeed", "linkedin", "zip_recruiter"]
 
@@ -347,7 +354,7 @@ def search_jobs(
         for site, count in site_counts.items():
             log.info("  %s: %d", site, count)
 
-    conn = init_db()
+    conn = init_db_for_ctx(ctx)
     new, existing = store_jobspy_results(conn, df, query)
     log.info("Stored: %d new, %d already in DB", new, existing)
 
@@ -369,6 +376,8 @@ def _full_crawl(
     hours_old: int = 72,
     proxy: str | None = None,
     max_retries: int = 2,
+    *,
+    ctx: "RunContext",
 ) -> dict:
     """Run all search queries from search config across all locations."""
     if sites is None:
@@ -403,7 +412,7 @@ def _full_crawl(
              ", ".join(sites), results_per_site, hours_old)
 
     # Ensure DB schema is ready
-    init_db()
+    conn = init_db_for_ctx(ctx)
 
     total_new = 0
     total_existing = 0
@@ -415,6 +424,7 @@ def _full_crawl(
             s, sites, results_per_site, hours_old,
             proxy_config, defaults, max_retries,
             accept_locs, reject_locs, glassdoor_map,
+            conn,
         )
         completed += 1
         total_new += result["new"]
@@ -426,7 +436,6 @@ def _full_crawl(
                      completed, len(searches), total_new, total_existing, total_errors)
 
     # Final stats
-    conn = get_connection()
     db_total = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
 
     log.info("Full crawl complete: %d new | %d dupes | %d errors | %d total in DB",
@@ -443,21 +452,25 @@ def _full_crawl(
 
 # -- Public entry point ------------------------------------------------------
 
-def run_discovery(cfg: dict | None = None) -> dict:
+def run_discovery(cfg: dict | None = None, ctx: "RunContext | None" = None) -> dict:
     """Main entry point for JobSpy-based job discovery.
 
     Loads search queries and locations from the user's search config YAML,
     then runs a full crawl across all configured job boards.
 
     Args:
-        cfg: Override the search configuration dict. If None, loads from
-             the user's searches.yaml file.
+        cfg: Override the search configuration dict. If None, reads
+             ``ctx.user.search_config``.
+        ctx: Optional :class:`RunContext`. When ``None`` a CLI-default
+             context is built from ``APP_DIR``.
 
     Returns:
         Dict with stats: new, existing, errors, db_total, queries.
     """
+    if ctx is None:
+        ctx = build_default_run_context()
     if cfg is None:
-        cfg = config.load_search_config()
+        cfg = ctx.user.search_config or {}
 
     if not cfg:
         log.warning("No search configuration found. Run `applypilot init` to create one.")
@@ -478,4 +491,5 @@ def run_discovery(cfg: dict | None = None) -> dict:
         results_per_site=results_per_site,
         hours_old=hours_old,
         proxy=proxy,
+        ctx=ctx,
     )

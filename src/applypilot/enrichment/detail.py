@@ -19,13 +19,18 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from urllib.parse import urljoin
 
+from typing import TYPE_CHECKING
+
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 
-from applypilot.config import load_profile, load_search_config
-from applypilot.database import init_db
+from applypilot.core import build_default_run_context
+from applypilot.database import init_db_for_ctx
 from applypilot.discovery.filters import apply_rule_gate
-from applypilot.llm import get_client
+from applypilot.llm import LLMClient, get_client_for_ctx
+
+if TYPE_CHECKING:
+    from applypilot.core import RunContext
 
 log = logging.getLogger(__name__)
 
@@ -459,7 +464,7 @@ def clean_content_html(html: str) -> str:
     return str(soup)
 
 
-def extract_with_llm(page, url: str) -> dict:
+def extract_with_llm(page, url: str, *, client: LLMClient) -> dict:
     """Send focused HTML to LLM for extraction. Fallback tier."""
     content = extract_main_content(page)
     if not content:
@@ -478,7 +483,6 @@ def extract_with_llm(page, url: str) -> dict:
     )
 
     try:
-        client = get_client("enrich")
         t0 = time.time()
         raw = client.chat([{"role": "user", "content": prompt}], max_output_tokens=4096)
         elapsed = time.time() - t0
@@ -543,7 +547,7 @@ RETRYABLE_STATUSES = {408, 429, 500, 502, 503, 504}
 PERMANENT_FAILURES = {404, 410, 451}
 
 
-def scrape_detail_page(page, url: str) -> dict:
+def scrape_detail_page(page, url: str, *, client: LLMClient) -> dict:
     """Full cascade for one detail page."""
     result: dict = {
         "full_description": None,
@@ -604,7 +608,7 @@ def scrape_detail_page(page, url: str) -> dict:
     tier2_apply = apply
 
     # Tier 3: LLM
-    llm_result = extract_with_llm(page, url)
+    llm_result = extract_with_llm(page, url, client=client)
     result["full_description"] = llm_result.get("full_description")
     result["application_url"] = llm_result.get("application_url") or tier2_apply
     result["tier_used"] = 3
@@ -628,10 +632,14 @@ def scrape_site_batch(
     delay: float = 2.0,
     max_jobs: int | None = None,
     headless: bool = True,
+    *,
+    client: LLMClient,
+    ctx: "RunContext | None" = None,
 ) -> dict:
     """Process all jobs for one site using shared browser context.
 
-    If conn is None, creates its own DB connection.
+    If ``conn`` is None, opens a thread-local connection via ``ctx.user.db``
+    (falling back to the module-global SQLite when ``ctx`` is absent).
     """
     stats: dict = {"processed": 0, "ok": 0, "partial": 0, "error": 0, "tiers": {1: 0, 2: 0, 3: 0}}
 
@@ -641,9 +649,12 @@ def scrape_site_batch(
     if not jobs:
         return stats
 
-    own_conn = conn is None
-    if own_conn:
-        conn = init_db()
+    own_conn = conn is None and ctx is None
+    if conn is None:
+        if ctx is not None:
+            conn = ctx.user.db.connection()
+        else:
+            conn = init_db_for_ctx(build_default_run_context())
 
     now = datetime.now(timezone.utc).isoformat()
 
@@ -659,7 +670,7 @@ def scrape_site_batch(
             for i, (url, title) in enumerate(jobs):
                 log.info("[%d/%d] %s", i + 1, len(jobs), title[:50] if title else url[:50])
 
-                result = scrape_detail_page(page, url)
+                result = scrape_detail_page(page, url, client=client)
                 stats["processed"] += 1
 
                 tier = result.get("tier_used")
@@ -704,20 +715,17 @@ def scrape_site_batch(
     return stats
 
 
-def _inline_rule_gate(rows: list, conn: sqlite3.Connection) -> list:
+def _inline_rule_gate(rows: list, conn: sqlite3.Connection, ctx: "RunContext") -> list:
     """Soft-mark rule-gate rejects among `rows` and return the survivors.
 
     `rows` is a list of (url, title, site, location, ...) sqlite rows. Saves
     browser/LLM spend on titles/locations that would be rejected after
-    enrichment anyway. Config/profile errors are allowed to propagate;
-    anything else is logged with a traceback and treated as a pass-through
-    so a bad rule-gate call can't silently block all enrichment.
+    enrichment anyway. Any unexpected rule-gate failure is logged with a
+    traceback and treated as a pass-through so a bad call can't silently
+    block all enrichment.
     """
-    search_cfg = load_search_config() or {}
-    try:
-        profile = load_profile()
-    except FileNotFoundError:
-        profile = {}
+    search_cfg = ctx.user.search_config or {}
+    profile = ctx.user.profile or {}
     try:
         jobs_for_gate = [
             {"url": r[0], "title": r[1], "site": r[2], "location": r[3]} for r in rows
@@ -736,6 +744,9 @@ def _run_detail_scraper(
     max_per_site: int | None = None,
     workers: int = 1,
     headless: bool = True,
+    *,
+    ctx: "RunContext",
+    client: LLMClient,
 ) -> dict:
     """Groups pending jobs by site and processes each batch.
 
@@ -756,7 +767,7 @@ def _run_detail_scraper(
         log.info("No pending jobs to scrape.")
         return {"processed": 0, "ok": 0, "partial": 0, "error": 0}
 
-    rows = _inline_rule_gate(rows, conn)
+    rows = _inline_rule_gate(rows, conn, ctx)
     if not rows:
         log.info("No pending jobs to scrape (all filtered by rule gate).")
         return {"processed": 0, "ok": 0, "partial": 0, "error": 0}
@@ -794,7 +805,7 @@ def _run_detail_scraper(
             jobs = site_jobs[site]
             delay = SITE_DELAYS.get(site, 2.0)
             log.info("%s -- %d jobs (delay=%.1fs)", site, len(jobs), delay)
-            stats = scrape_site_batch(None, site, jobs, delay=delay, max_jobs=max_per_site, headless=headless)
+            stats = scrape_site_batch(None, site, jobs, delay=delay, max_jobs=max_per_site, headless=headless, client=client, ctx=ctx)
             log.info("%s summary: %d ok, %d partial, %d error | T1=%d T2=%d T3=%d",
                      site, stats["ok"], stats["partial"], stats["error"],
                      stats["tiers"].get(1, 0), stats["tiers"].get(2, 0), stats["tiers"].get(3, 0))
@@ -811,7 +822,7 @@ def _run_detail_scraper(
             delay = SITE_DELAYS.get(site, 2.0)
             log.info("%s -- %d jobs (delay=%.1fs)", site, len(jobs), delay)
 
-            stats = scrape_site_batch(conn, site, jobs, delay=delay, max_jobs=max_per_site, headless=headless)
+            stats = scrape_site_batch(conn, site, jobs, delay=delay, max_jobs=max_per_site, headless=headless, client=client, ctx=ctx)
             _merge_stats(stats)
 
             log.info("Site summary: %d ok, %d partial, %d error | T1=%d T2=%d T3=%d",
@@ -839,6 +850,7 @@ def stream_detail(
     my_done,
     proxy_str: str | None = None,
     poll_interval: float = 5.0,
+    ctx: "RunContext | None" = None,
 ) -> None:
     """Streaming detail scraper: polls DB for un-scraped jobs, scrapes sites sequentially.
 
@@ -847,11 +859,16 @@ def stream_detail(
         my_done: Event to set when this stage completes.
         proxy_str: Proxy in host:port:user:pass format.
         poll_interval: Seconds to sleep when no pending jobs found.
+        ctx: Optional :class:`RunContext`. When ``None`` a CLI-default
+            context is built from ``APP_DIR``.
     """
+    if ctx is None:
+        ctx = build_default_run_context()
     if proxy_str:
         set_proxy(proxy_str)
 
-    conn = init_db()
+    conn = init_db_for_ctx(ctx)
+    client = get_client_for_ctx(ctx, "enrich")
 
     url_stats = resolve_all_urls(conn)
     log.info("URL resolution: %d resolved, %d absolute",
@@ -871,7 +888,7 @@ def stream_detail(
             ).fetchall()
 
             if rows:
-                rows = _inline_rule_gate(rows, conn)
+                rows = _inline_rule_gate(rows, conn, ctx)
                 if not rows:
                     log.info("All pending rows filtered by rule gate this tick.")
 
@@ -886,7 +903,7 @@ def stream_detail(
                     log.info("%s: %d jobs (delay=%.1fs)", site, len(jobs), delay)
 
                     try:
-                        stats = scrape_site_batch(conn, site, jobs, delay=delay)
+                        stats = scrape_site_batch(conn, site, jobs, delay=delay, client=client, ctx=ctx)
                         total_ok += stats["ok"] + stats["partial"]
                         total_err += stats["error"]
                         log.info("%s: %d ok, %d partial, %d error",
@@ -903,13 +920,18 @@ def stream_detail(
         elapsed = time.time() - t0
         if total_ok or total_err:
             log.info("DONE: %d ok, %d errors in %.1fs", total_ok, total_err, elapsed)
-        conn.close()
+        ctx.user.db.close()
         my_done.set()
 
 
 # -- Public entry point ------------------------------------------------------
 
-def run_enrichment(limit: int = 100, workers: int = 1, headless: bool = True) -> dict:
+def run_enrichment(
+    limit: int = 100,
+    workers: int = 1,
+    headless: bool = True,
+    ctx: "RunContext | None" = None,
+) -> dict:
     """Main entry point for detail page enrichment.
 
     Fetches pending jobs from the database (those without full_description),
@@ -920,11 +942,16 @@ def run_enrichment(limit: int = 100, workers: int = 1, headless: bool = True) ->
         limit: Maximum number of jobs per site to process.
         workers: Number of parallel threads for site batch processing. Default 1 (sequential).
         headless: Whether to run the browser headlessly during enrichment.
+        ctx: Optional :class:`RunContext`. When ``None`` a CLI-default
+            context is built from ``APP_DIR``.
 
     Returns:
         Dict with stats: processed, ok, partial, error, tiers.
     """
-    conn = init_db()
+    if ctx is None:
+        ctx = build_default_run_context()
+    conn = init_db_for_ctx(ctx)
+    client = get_client_for_ctx(ctx, "enrich")
 
     # URL resolution first
     url_stats = resolve_all_urls(conn)
@@ -944,6 +971,6 @@ def run_enrichment(limit: int = 100, workers: int = 1, headless: bool = True) ->
             log.info("WTTJ: %d URLs updated", updated)
 
     # Run the detail scraper
-    stats = _run_detail_scraper(conn, max_per_site=limit, workers=workers, headless=headless)
+    stats = _run_detail_scraper(conn, max_per_site=limit, workers=workers, headless=headless, ctx=ctx, client=client)
 
     return stats

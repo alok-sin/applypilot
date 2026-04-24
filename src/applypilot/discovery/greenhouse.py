@@ -15,9 +15,16 @@ from typing import Optional
 import httpx
 import yaml
 
+from typing import TYPE_CHECKING
+
+from applypilot import config
 from applypilot.config import APP_DIR, CONFIG_DIR
-from applypilot.database import get_connection
+from applypilot.core import build_default_run_context
+from applypilot.database import init_db_for_ctx
 from applypilot.discovery.filters import _load_location_filter, _location_ok
+
+if TYPE_CHECKING:
+    from applypilot.core import RunContext
 
 log = logging.getLogger(__name__)
 
@@ -242,22 +249,25 @@ def search_all(
     workers: int = 4,
     location_filter: bool = True,
     _employers_override: dict | None = None,
+    ctx: "RunContext | None" = None,
 ) -> tuple[int, int]:
     """Search all configured Greenhouse employers via API.
 
     Returns (new_jobs_count, existing_jobs_count).
     """
-    from applypilot import config as _cfg
+    if ctx is None:
+        ctx = build_default_run_context()
+
+    search_cfg = ctx.user.search_config or {}
     employers = _employers_override if _employers_override else load_employers()
-    employers = _cfg.filter_employers_by_tags(employers)
+    employers = config.filter_employers_by_tags(employers, search_cfg)
     if not employers:
         log.warning("No Greenhouse employers configured")
         return 0, 0
 
-    accept_locs, reject_locs = _load_location_filter()
+    accept_locs, reject_locs = _load_location_filter(search_cfg)
 
     # Pull max_hours from search config so stale postings get dropped at fetch time.
-    search_cfg = _cfg.load_search_config() or {}
     max_hours = int(search_cfg.get("defaults", {}).get("hours_old") or 0) or None
 
     log.info('Greenhouse API search: %d employers, "%s", workers=%d', len(employers), search_text, workers)
@@ -297,12 +307,12 @@ def search_all(
     )
 
     # Store in database
-    return _store_jobs(all_jobs)
+    return _store_jobs(all_jobs, ctx=ctx)
 
 
-def _store_jobs(jobs: list[dict]) -> tuple[int, int]:
+def _store_jobs(jobs: list[dict], *, ctx: "RunContext") -> tuple[int, int]:
     """Store discovered jobs in the database. Returns (new, existing)."""
-    conn = get_connection()
+    conn = init_db_for_ctx(ctx)
     now = datetime.now(timezone.utc).isoformat()
     new = 0
     existing = 0
@@ -342,16 +352,21 @@ def _store_jobs(jobs: list[dict]) -> tuple[int, int]:
 def run_all_searches(
     searches: list[dict],
     workers: int = 4,
+    ctx: "RunContext | None" = None,
 ) -> dict:
     """Run multiple search queries across all Greenhouse employers.
 
     Args:
         searches: List of search configs with 'query' key
         workers: Number of parallel threads
+        ctx: Run context; a default local one is built if None.
 
     Returns:
         Dict with total new/existing counts and per-query breakdown
     """
+    if ctx is None:
+        ctx = build_default_run_context()
+
     total_new = 0
     total_existing = 0
     per_query = []
@@ -360,7 +375,7 @@ def run_all_searches(
         query = search.get("query", "")
         log.info('Greenhouse API search: "%s"', query)
 
-        new, existing = search_all(query, workers=workers)
+        new, existing = search_all(query, workers=workers, ctx=ctx)
         total_new += new
         total_existing += existing
 

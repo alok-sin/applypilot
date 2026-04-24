@@ -18,7 +18,7 @@ def test_run_discover_with_site_filter_only_runs_matching_smart_extract(monkeypa
             {"name": "Dice", "url": "https://dice.example", "type": "search"},
         ]
 
-    def _fake_run_smart_extract(*, sites, workers):
+    def _fake_run_smart_extract(*, sites, workers, ctx=None):
         captured["sites"] = sites
         captured["workers"] = workers
 

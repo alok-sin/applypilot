@@ -18,10 +18,13 @@ from dataclasses import dataclass
 import logging
 import os
 import threading
-from typing import Any, Literal, TypedDict, Unpack
+from typing import TYPE_CHECKING, Any, Literal, TypedDict, Unpack
 import warnings
 
 import litellm
+
+if TYPE_CHECKING:
+    from applypilot.core.context import RunContext
 
 # Suppress pydantic serialization warnings from litellm internals when provider
 # responses have fewer fields than the full ModelResponse schema.
@@ -349,6 +352,10 @@ class LLMClient:
             )
 
         # Standard non-streaming call with optional fallback.
+        from applypilot.cancellation import stop_event
+
+        if stop_event.is_set():
+            raise KeyboardInterrupt()
         try:
             return self._do_completion(
                 messages,
@@ -362,7 +369,13 @@ class LLMClient:
                 drop_params=drop_params,
                 **extra,
             )
+        except (KeyboardInterrupt, SystemExit):
+            raise
         except Exception as primary_exc:
+            # litellm can wrap a KeyboardInterrupt from httpx into a generic
+            # exception. If cancellation was requested, don't fall back.
+            if stop_event.is_set():
+                raise KeyboardInterrupt() from primary_exc
             if not self.config.fallback_model:
                 raise RuntimeError(f"LLM request failed ({self.provider}/{self.model}): {primary_exc}") from primary_exc
 
@@ -476,9 +489,24 @@ def _load_llm_yaml() -> dict | None:
     return None
 
 
-def _resolve_task_config(task: str) -> LLMConfig | None:
-    """Build an LLMConfig from llm.yaml for a given task, or None if not configured."""
-    yaml_cfg = _load_llm_yaml()
+_PROVIDER_KEY_ENV = {
+    "gemini": "GEMINI_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "lightning": "LIGHTNING_API_KEY",
+}
+
+
+def _task_config_from_yaml(
+    yaml_cfg: dict | None,
+    env: Mapping[str, str],
+    task: str,
+) -> LLMConfig | None:
+    """Pure: build an LLMConfig from a parsed llm.yaml dict + env mapping.
+
+    Returns ``None`` if the yaml doesn't configure this task (caller should
+    fall through to ``resolve_llm_config(env)`` or its own default).
+    """
     if not yaml_cfg:
         return None
 
@@ -497,35 +525,21 @@ def _resolve_task_config(task: str) -> LLMConfig | None:
     provider = _provider_from_model(model)
 
     # Resolve API key: task-level api_key_env → provider default → LLM_API_KEY
-    api_key_env_name = task_entry.get("api_key_env")
-    if not api_key_env_name:
-        _provider_key_env = {
-            "gemini": "GEMINI_API_KEY",
-            "openai": "OPENAI_API_KEY",
-            "anthropic": "ANTHROPIC_API_KEY",
-            "lightning": "LIGHTNING_API_KEY",
-        }
-        api_key_env_name = _provider_key_env.get(provider, "LLM_API_KEY")
-    api_key = os.environ.get(api_key_env_name, "") or os.environ.get("LLM_API_KEY", "")
+    api_key_env_name = task_entry.get("api_key_env") or _PROVIDER_KEY_ENV.get(provider, "LLM_API_KEY")
+    api_key = _env_get(env, api_key_env_name) or _env_get(env, "LLM_API_KEY")
 
     # Resolve api_base: task-level → provider default → LLM_URL
-    api_base = task_entry.get("api_base") or _PROVIDER_API_BASE.get(provider) or os.environ.get("LLM_URL", "")
+    api_base = task_entry.get("api_base") or _PROVIDER_API_BASE.get(provider) or _env_get(env, "LLM_URL")
     api_base = api_base.rstrip("/") if api_base else None
 
     use_streaming = str(task_entry.get("streaming", "")).lower() in ("true", "1", "yes")
 
     # Resolve fallback model: task-level → global default.
-    _provider_key_env_fb = {
-        "gemini": "GEMINI_API_KEY",
-        "openai": "OPENAI_API_KEY",
-        "anthropic": "ANTHROPIC_API_KEY",
-        "lightning": "LIGHTNING_API_KEY",
-    }
     fallback_model = task_entry.get("fallback") or _DEFAULT_FALLBACK_MODEL
     fallback_provider = _provider_from_model(fallback_model)
     # Explicit fallback_api_key_env takes priority (needed for cross-provider fallbacks).
-    fb_api_key_env = task_entry.get("fallback_api_key_env") or _provider_key_env_fb.get(fallback_provider, "LLM_API_KEY")
-    fallback_api_key = os.environ.get(fb_api_key_env, "") or os.environ.get("LLM_API_KEY", "") or api_key
+    fb_api_key_env = task_entry.get("fallback_api_key_env") or _PROVIDER_KEY_ENV.get(fallback_provider, "LLM_API_KEY")
+    fallback_api_key = _env_get(env, fb_api_key_env) or _env_get(env, "LLM_API_KEY") or api_key
     fallback_api_base = task_entry.get("fallback_api_base") or _PROVIDER_API_BASE.get(fallback_provider)
 
     return LLMConfig(
@@ -538,6 +552,79 @@ def _resolve_task_config(task: str) -> LLMConfig | None:
         fallback_api_key=fallback_api_key,
         fallback_api_base=fallback_api_base,
     )
+
+
+def _resolve_task_config(task: str) -> LLMConfig | None:
+    """Module-global wrapper — reads the cached llm.yaml and ``os.environ``.
+
+    Kept for today's ``get_client()`` callers; new code should prefer
+    :func:`resolve_config_for_ctx`, which scopes resolution to a
+    :class:`RunContext` instead of process state.
+    """
+    return _task_config_from_yaml(_load_llm_yaml(), os.environ, task)
+
+
+def _ctx_env(ctx: "RunContext") -> dict[str, str]:
+    """Snapshot env for this ctx: ``os.environ`` shadowed by user secrets.
+
+    ``SecretsProvider.get`` is authoritative where it returns a value
+    (matches today's ``.env``-beats-process-env precedence). Fall through
+    to ``os.environ`` for keys the provider doesn't know.
+    """
+    env = dict(os.environ)
+    secrets = ctx.user.secrets
+    if secrets is None:
+        return env
+    # Pre-seed provider/LLM keys so the pure resolvers see them as regular
+    # mapping entries. Only overwrites when the provider has a concrete
+    # value — missing secrets leave os.environ's reading intact.
+    for key in (
+        "GEMINI_API_KEY",
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "LIGHTNING_API_KEY",
+        "LLM_API_KEY",
+        "LLM_URL",
+        "LLM_MODEL",
+        "LLM_FALLBACK_MODEL",
+        "LLM_STREAMING_MODE",
+    ):
+        value = secrets.get(key)
+        if value:
+            env[key] = value
+    return env
+
+
+def resolve_config_for_ctx(ctx: "RunContext", task: str = "default") -> LLMConfig:
+    """Resolve the effective LLM config for this ctx + task.
+
+    Order:
+      1. ``ctx.task.llm_overrides[task]`` — per-task BYO config.
+      2. ``ctx.user.llm_config`` (parsed ``llm.yaml``) + user's secrets/env.
+      3. Env-only ``resolve_llm_config`` (today's default path).
+    """
+    override = ctx.task.llm_overrides.get(task)
+    if override is not None:
+        return override
+
+    env = _ctx_env(ctx)
+    from_yaml = _task_config_from_yaml(ctx.user.llm_config, env, task)
+    if from_yaml is not None:
+        return from_yaml
+
+    return resolve_llm_config(env)
+
+
+def get_client_for_ctx(ctx: "RunContext", task: str = "default") -> LLMClient:
+    """Build a fresh :class:`LLMClient` for this ctx + task.
+
+    Unlike :func:`get_client`, this does not use the process-global
+    ``_clients`` cache — two ctxs (two users) must never share a client
+    that was built with someone else's credentials. Workers that reuse a
+    ctx across tasks can cache on their own side.
+    """
+    config = resolve_config_for_ctx(ctx, task)
+    return LLMClient(config)
 
 
 def get_client(task: str = "default") -> LLMClient:

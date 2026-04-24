@@ -15,17 +15,20 @@ import logging
 import re
 import time
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
-from applypilot import config
-from applypilot.config import RESUME_PATH, TAILORED_DIR, load_profile
-from applypilot.database import get_connection, get_jobs_by_stage
+from applypilot.core import build_default_run_context
+from applypilot.database import get_jobs_by_stage
 from applypilot.discovery.filters import apply_geo_gate
-from applypilot.llm import get_client
+from applypilot.llm import LLMClient, get_client_for_ctx
 from applypilot.scoring.validator import (
     BANNED_WORDS,
     sanitize_text,
     validate_json_fields,
 )
+
+if TYPE_CHECKING:
+    from applypilot.core import RunContext
 
 log = logging.getLogger(__name__)
 
@@ -312,23 +315,12 @@ def assemble_resume_text(data: dict, profile: dict) -> str:
 # ── LLM Judge ────────────────────────────────────────────────────────────
 
 def judge_tailored_resume(
-    original_text: str, tailored_text: str, job_title: str, profile: dict
+    original_text: str, tailored_text: str, job_title: str, profile: dict,
+    *, client: "LLMClient",
 ) -> dict:
-    """LLM judge layer: catches subtle fabrication that programmatic checks miss.
-
-    Args:
-        original_text: Base resume text.
-        tailored_text: Tailored resume text.
-        job_title: Target job title.
-        profile: User profile for building the judge prompt.
-
-    Returns:
-        {"passed": bool, "verdict": str, "issues": str, "raw": str}
-    """
+    """LLM judge layer: catches subtle fabrication that programmatic checks miss."""
     judge_prompt = _build_judge_prompt(profile)
 
-    # Static parts (judge_prompt + ORIGINAL RESUME) split into cached blocks;
-    # the tailored output varies per call so it stays uncached.
     messages = [
         {"role": "system", "content": judge_prompt, "cache": "ephemeral"},
         {"role": "user", "content": f"ORIGINAL RESUME:\n{original_text}", "cache": "ephemeral"},
@@ -339,7 +331,6 @@ def judge_tailored_resume(
         )},
     ]
 
-    client = get_client("tailor")
     response = client.chat(messages, max_output_tokens=512)
 
     passed = "VERDICT: PASS" in response.upper()
@@ -361,6 +352,7 @@ def judge_tailored_resume(
 def tailor_resume(
     resume_text: str, job: dict, profile: dict,
     max_retries: int = 3, validation_mode: str = "normal",
+    *, client: "LLMClient",
 ) -> tuple[str, dict, dict | None]:
     """Generate a tailored resume via JSON output + fresh context on each retry.
 
@@ -395,7 +387,6 @@ def tailor_resume(
     avoid_notes: list[str] = []
     tailored = ""
     last_data: dict | None = None
-    client = get_client("tailor")
     tailor_prompt_base = _build_tailor_prompt(profile)
 
     for attempt in range(max_retries + 1):
@@ -452,7 +443,9 @@ def tailor_resume(
             report["status"] = "approved"
             return tailored, report, last_data
 
-        judge = judge_tailored_resume(resume_text, tailored, job.get("title", ""), profile)
+        judge = judge_tailored_resume(
+            resume_text, tailored, job.get("title", ""), profile, client=client,
+        )
         report["judge"] = judge
 
         if not judge["passed"]:
@@ -476,20 +469,18 @@ def tailor_resume(
 # ── Batch Entry Point ────────────────────────────────────────────────────
 
 def run_tailoring(min_score: int = 7, limit: int = 20,
-                  validation_mode: str = "normal") -> dict:
-    """Generate tailored resumes for high-scoring jobs.
+                  validation_mode: str = "normal",
+                  ctx: "RunContext | None" = None) -> dict:
+    """Generate tailored resumes for high-scoring jobs."""
+    if ctx is None:
+        ctx = build_default_run_context()
 
-    Args:
-        min_score:       Minimum fit_score to tailor for.
-        limit:           Maximum jobs to process.
-        validation_mode: "strict", "normal", or "lenient".
-
-    Returns:
-        {"approved": int, "failed": int, "errors": int, "elapsed": float}
-    """
-    profile = load_profile()
-    resume_text = RESUME_PATH.read_text(encoding="utf-8")
-    conn = get_connection()
+    profile = ctx.user.profile
+    if not profile:
+        raise FileNotFoundError("Profile not found — run `applypilot init` first.")
+    resume_text = ctx.user.resume_text
+    conn = ctx.user.db.connection()
+    tailored_dir = ctx.user.storage.tailored_dir()
 
     jobs = get_jobs_by_stage(conn=conn, stage="pending_tailor", min_score=min_score, limit=limit)
 
@@ -501,19 +492,25 @@ def run_tailoring(min_score: int = 7, limit: int = 20,
         columns = jobs[0].keys()
         jobs = [dict(zip(columns, row)) for row in jobs]
 
-    jobs = apply_geo_gate(jobs, config.load_search_config() or {}, conn)
+    jobs = apply_geo_gate(jobs, ctx.user.search_config or {}, conn)
     if not jobs:
         log.info("All tailor candidates filtered by geo_gate.")
         return {"approved": 0, "failed": 0, "errors": 0, "elapsed": 0.0}
 
-    TAILORED_DIR.mkdir(parents=True, exist_ok=True)
+    tailored_dir.mkdir(parents=True, exist_ok=True)
     log.info("Tailoring resumes for %d jobs (score >= %d)...", len(jobs), min_score)
     t0 = time.time()
     completed = 0
     results: list[dict] = []
     stats: dict[str, int] = {"approved": 0, "failed_validation": 0, "failed_judge": 0, "error": 0}
 
+    client = get_client_for_ctx(ctx, "tailor")
+    cancel = ctx.task.cancellation
+
     for job in jobs:
+        if cancel.is_set():
+            log.info("Tailoring cancelled after %d/%d jobs", completed, len(jobs))
+            break
         completed += 1
         log.info(
             "%d/%d [START] score=%s | %s | %s",
@@ -525,7 +522,7 @@ def run_tailoring(min_score: int = 7, limit: int = 20,
         )
         try:
             tailored, report, parsed_json = tailor_resume(
-                resume_text, job, profile, validation_mode=validation_mode
+                resume_text, job, profile, validation_mode=validation_mode, client=client,
             )
 
             # Build safe filename prefix. The URL-derived hash suffix keeps
@@ -538,12 +535,12 @@ def run_tailoring(min_score: int = 7, limit: int = 20,
             prefix = f"{safe_site}_{safe_title}_{url_hash}"
 
             # Save structured resume JSON as the canonical intermediate artifact.
-            json_path = TAILORED_DIR / f"{prefix}.json"
+            json_path = tailored_dir / f"{prefix}.json"
             if parsed_json is not None:
                 json_path.write_text(json.dumps(parsed_json, indent=2), encoding="utf-8")
 
             # Save job description for traceability
-            job_path = TAILORED_DIR / f"{prefix}_JOB.txt"
+            job_path = tailored_dir / f"{prefix}_JOB.txt"
             job_desc = (
                 f"Title: {job['title']}\n"
                 f"Company: {job['site']}\n"
@@ -561,13 +558,13 @@ def run_tailoring(min_score: int = 7, limit: int = 20,
                 try:
                     from applypilot.scoring.pdf import convert_text_to_pdf
 
-                    pdf_path = str(convert_text_to_pdf(tailored, TAILORED_DIR / f"{prefix}.pdf"))
+                    pdf_path = str(convert_text_to_pdf(tailored, tailored_dir / f"{prefix}.pdf"))
                 except Exception:
                     log.debug("PDF generation failed for %s", json_path, exc_info=True)
                     report["status"] = "error"
 
             # Save validation/reporting metadata after final status is known.
-            report_path = TAILORED_DIR / f"{prefix}_REPORT.json"
+            report_path = tailored_dir / f"{prefix}_REPORT.json"
             report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
 
             result = {

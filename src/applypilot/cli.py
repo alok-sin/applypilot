@@ -5,13 +5,16 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
 from applypilot import __version__
+
+if TYPE_CHECKING:
+    from applypilot.core import RunContext
 
 
 class _ColorFormatter(logging.Formatter):
@@ -101,14 +104,19 @@ VALID_STAGES = ("discover", "enrich", "score", "tailor", "cover", "pdf")
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _bootstrap() -> None:
-    """Common setup: load env, create dirs, init DB."""
+def _bootstrap() -> "RunContext":
+    """Common setup: load env, create dirs, init DB. Returns a fresh RunContext."""
+    from applypilot.cancellation import install_sigint_handler
     from applypilot.config import load_env, ensure_dirs
-    from applypilot.database import init_db
+    from applypilot.core import build_default_run_context
+    from applypilot.database import init_db_for_ctx
 
     load_env()
     ensure_dirs()
-    init_db()
+    install_sigint_handler()
+    ctx = build_default_run_context()
+    init_db_for_ctx(ctx)
+    return ctx
 
 
 def _version_callback(value: bool) -> None:
@@ -227,7 +235,7 @@ def run(
     ),
 ) -> None:
     """Run pipeline stages: discover, enrich, score, tailor, cover, pdf."""
-    _bootstrap()
+    ctx = _bootstrap()
 
     from applypilot.pipeline import run_pipeline
 
@@ -243,9 +251,7 @@ def run(
             raise typer.Exit(code=1)
 
     if reset_enrich_errors:
-        from applypilot.database import get_connection
-
-        conn = get_connection()
+        conn = ctx.user.db.connection()
         result_reset = conn.execute(
             "UPDATE jobs SET detail_scraped_at = NULL, detail_error = NULL "
             "WHERE detail_error IS NOT NULL"
@@ -279,6 +285,7 @@ def run(
         validation_mode=validation,
         rescore_above=rescore_above,
         limit=limit,
+        ctx=ctx,
     )
 
     if result.get("errors"):
@@ -296,14 +303,13 @@ def add_url(
     strategy: str = typer.Option("manual_url", "--strategy", help="Discovery strategy label."),
 ) -> None:
     """Insert or update a single job URL in the database."""
-    _bootstrap()
+    ctx = _bootstrap()
 
     from datetime import datetime, timezone
-    from applypilot.database import get_connection
 
     now = datetime.now(timezone.utc).isoformat()
     apply_url = application_url or url
-    conn = get_connection()
+    conn = ctx.user.db.connection()
 
     exists = conn.execute("SELECT 1 FROM jobs WHERE url = ?", (url,)).fetchone() is not None
 
@@ -359,40 +365,39 @@ def apply(
     kill_chrome: bool = typer.Option(False, "--kill-chrome", help="Kill tracked Chrome worker processes."),
 ) -> None:
     """Launch auto-apply to submit job applications."""
-    _bootstrap()
+    ctx = _bootstrap()
 
     from applypilot.config import check_tier, PROFILE_PATH as _profile_path
-    from applypilot.database import get_connection
 
     # --- Utility modes (no Chrome/Claude needed) ---
 
     if mark_applied:
         from applypilot.apply.launcher import mark_job
-        mark_job(mark_applied, "applied")
+        mark_job(mark_applied, "applied", ctx=ctx)
         console.print(f"[green]Marked as applied:[/green] {mark_applied}")
         return
 
     if mark_failed:
         from applypilot.apply.launcher import mark_job
-        mark_job(mark_failed, "failed", reason=fail_reason)
+        mark_job(mark_failed, "failed", reason=fail_reason, ctx=ctx)
         console.print(f"[yellow]Marked as failed:[/yellow] {mark_failed} ({fail_reason or 'manual'})")
         return
 
     if reset_failed:
         from applypilot.apply.launcher import reset_failed as do_reset
-        count = do_reset()
+        count = do_reset(ctx=ctx)
         console.print(f"[green]Reset {count} failed job(s) for retry.[/green]")
         return
 
     if remove_expired:
         from applypilot.apply.launcher import remove_expired as do_remove
-        count = do_remove()
+        count = do_remove(ctx=ctx)
         console.print(f"[green]Removed {count} expired job(s).[/green]")
         return
 
     if reset_in_progress:
         from applypilot.apply.launcher import reset_in_progress as do_reset_in_progress
-        count = do_reset_in_progress()
+        count = do_reset_in_progress(ctx=ctx)
         console.print(f"[green]Reset {count} in-progress job(s).[/green]")
         return
 
@@ -418,7 +423,7 @@ def apply(
 
     # Check 3: Tailored resumes exist (skip for --gen with --url)
     if not (gen and url):
-        conn = get_connection()
+        conn = ctx.user.db.connection()
         ready = conn.execute(
             "SELECT COUNT(*) FROM jobs WHERE tailored_resume_path IS NOT NULL AND applied_at IS NULL"
         ).fetchone()[0]
@@ -435,7 +440,7 @@ def apply(
         if not target:
             console.print("[red]--gen requires --url to specify which job.[/red]")
             raise typer.Exit(code=1)
-        prompt_file = gen_prompt(target, min_score=min_score, model=model)
+        prompt_file = gen_prompt(target, min_score=min_score, model=model, ctx=ctx)
         if not prompt_file:
             console.print("[red]No matching job found for that URL.[/red]")
             raise typer.Exit(code=1)
@@ -472,17 +477,18 @@ def apply(
         dry_run=dry_run,
         continuous=continuous,
         workers=workers,
+        ctx=ctx,
     )
 
 
 @app.command()
 def status() -> None:
     """Show pipeline statistics from the database."""
-    _bootstrap()
+    ctx = _bootstrap()
 
-    from applypilot.database import get_stats
+    from applypilot.database import get_stats_for_ctx
 
-    stats = get_stats()
+    stats = get_stats_for_ctx(ctx)
 
     console.print("\n[bold]ApplyPilot Pipeline Status[/bold]\n")
 
@@ -555,11 +561,11 @@ def status() -> None:
 @app.command()
 def dashboard() -> None:
     """Generate and open the HTML dashboard in your browser."""
-    _bootstrap()
+    ctx = _bootstrap()
 
     from applypilot.view import open_dashboard
 
-    open_dashboard()
+    open_dashboard(ctx=ctx)
 
 
 @app.command()

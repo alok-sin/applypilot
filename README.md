@@ -102,7 +102,7 @@ Each stage is independent. Run them all or pick what you need.
 |-----------|-------------|---------|
 | Python 3.11+ | Everything | Core runtime |
 | Node.js 18+ | Auto-apply | Needed for `npx` to run Playwright MCP server |
-| LLM credentials or local endpoint | Scoring, tailoring, cover letters | Set one of `GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `LLM_URL`. Optional: set `LLM_MODEL` (for example `gemini/gemini-3.0-flash`) to override the default model. |
+| LLM credentials or local endpoint | Scoring, tailoring, cover letters | Set one of `GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `LIGHTNING_API_KEY`, or `LLM_URL`. Optional: set `LLM_MODEL` (for example `gemini/gemini-3.0-flash`) to override the default model. |
 | Chrome/Chromium | Auto-apply | Auto-detected on most systems |
 | Claude Code CLI | Auto-apply | Install from [claude.ai/code](https://claude.ai/code) |
 
@@ -143,7 +143,9 @@ Job search queries, locations, JobSpy `sites` list, and per-job filtering knobs:
 - `defaults.seniority_floor_years` — auto-reject junior titles when your YOE meets the floor
 - `defaults.blocked_countries` — hard country reject
 - `defaults.llm_sweep_enabled` — toggle the per-job LLM classifier
-- `exclude_titles` — case-insensitive title substring blocklist (intern, fresher, …)
+- `exclude_titles` — case-insensitive title substring blocklist (intern, fresher, …). Evaluated before any allow-list.
+- `title_require_any` — optional allow-list: titles must contain ≥1 of these phrases (case-insensitive substring). Null/empty titles pass through. Useful for narrow profiles (BD, design, PM, …).
+- `location_accept` / `location_reject_non_remote` — case-insensitive geo filters consumed by the cross-stage `geo_gate` (runs at discover, score, tailor, and cover).
 - `discover_backends` — restrict the discover stage to a subset of `[jobspy, workday, greenhouse, smartrecruiters, smartextract]`
 - `discover_tags` — only crawl employers whose YAML entry has matching tags
 
@@ -171,8 +173,10 @@ Queries the JobSpy backends configured in `searches.yaml` (Indeed, LinkedIn, Nau
 
 After crawling, two cheap filter layers tag rows that should not proceed downstream:
 
-1. **Rule gate** — deterministic checks: `seniority_floor_years`, `blocked_countries`, `exclude_titles`. Writes `filter_reason` so enrichment/scoring skip the row.
+1. **Rule gate** — deterministic checks: `seniority_floor_years`, `blocked_countries`, `exclude_titles`, `title_require_any`. Writes `filter_reason` so downstream stages skip the row. Runs again at enrichment and scoring so rows that only gain a location/title after detail-fetch get caught too.
 2. **LLM sweep** — a per-job classifier using the `prefilter` task in `llm.yaml`. Marks remaining out-of-scope rows. Disable with `defaults.llm_sweep_enabled: false`.
+
+The geo half of the rule gate is also invoked cross-stage at score/tailor/cover so a row that survived discovery can still be rejected once enrichment clarifies its location. Invalid or unresolvable URLs get soft-marked via `filter_reason` instead of hard-deleted.
 
 Backend selection and employer scoping:
 

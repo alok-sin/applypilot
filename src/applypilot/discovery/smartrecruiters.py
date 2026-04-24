@@ -15,10 +15,16 @@ from datetime import datetime, timezone
 import httpx
 import yaml
 
+from typing import TYPE_CHECKING
+
 from applypilot import config
 from applypilot.config import APP_DIR, CONFIG_DIR
-from applypilot.database import get_connection
+from applypilot.core import build_default_run_context
+from applypilot.database import init_db_for_ctx
 from applypilot.discovery.filters import _load_location_filter, _location_ok
+
+if TYPE_CHECKING:
+    from applypilot.core import RunContext
 
 log = logging.getLogger(__name__)
 
@@ -254,19 +260,22 @@ def search_all(
     workers: int = 4,
     location_filter: bool = True,
     _employers_override: dict | None = None,
+    ctx: "RunContext | None" = None,
 ) -> tuple[int, int]:
     """Search all configured SmartRecruiters employers. Returns (new, existing)."""
-    from applypilot import config as _cfg
+    if ctx is None:
+        ctx = build_default_run_context()
+
+    search_cfg = ctx.user.search_config or {}
     employers = _employers_override if _employers_override else load_employers()
-    employers = _cfg.filter_employers_by_tags(employers)
+    employers = config.filter_employers_by_tags(employers, search_cfg)
     if not employers:
         log.warning("No SmartRecruiters employers configured")
         return 0, 0
 
-    accept_locs, reject_locs = _load_location_filter()
+    accept_locs, reject_locs = _load_location_filter(search_cfg)
 
     # Push user country to the SmartRecruiters API so off-country rows never come back.
-    search_cfg = _cfg.load_search_config() or {}
     api_country = search_cfg.get("country") or None
 
     log.info(
@@ -306,12 +315,12 @@ def search_all(
         len(all_jobs), len(employers), errors,
     )
 
-    return _store_jobs(all_jobs)
+    return _store_jobs(all_jobs, ctx=ctx)
 
 
-def _store_jobs(jobs: list[dict]) -> tuple[int, int]:
+def _store_jobs(jobs: list[dict], *, ctx: "RunContext") -> tuple[int, int]:
     """Store discovered jobs in the database. Returns (new, existing)."""
-    conn = get_connection()
+    conn = init_db_for_ctx(ctx)
     now = datetime.now(timezone.utc).isoformat()
     new = 0
     existing = 0

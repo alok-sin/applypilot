@@ -11,7 +11,13 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 
+from typing import TYPE_CHECKING
+
 from applypilot import config
+from applypilot.core import build_default_run_context
+
+if TYPE_CHECKING:
+    from applypilot.core import RunContext
 
 logger = logging.getLogger(__name__)
 
@@ -395,11 +401,12 @@ If CapSolver genuinely failed (errorId > 0):
 
 def build_prompt(job: dict, tailored_resume: str,
                  cover_letter: str | None = None,
-                 dry_run: bool = False) -> str:
+                 dry_run: bool = False,
+                 ctx: "RunContext | None" = None) -> str:
     """Build the full instruction prompt for the apply agent.
 
-    Loads the user profile and search config internally. All personal data
-    comes from the profile -- nothing is hardcoded.
+    Loads the user profile and search config from the ctx. All personal
+    data comes from the profile -- nothing is hardcoded.
 
     Args:
         job: Job dict from the database (must have url, title, site,
@@ -407,12 +414,15 @@ def build_prompt(job: dict, tailored_resume: str,
         tailored_resume: Plain-text content of the tailored resume.
         cover_letter: Optional plain-text cover letter content.
         dry_run: If True, tell the agent not to click Submit.
+        ctx: Run context; a default local one is built if None.
 
     Returns:
         Complete prompt string for the AI agent.
     """
-    profile = config.load_profile()
-    search_config = config.load_search_config()
+    if ctx is None:
+        ctx = build_default_run_context()
+    profile = ctx.user.profile or {}
+    search_config = ctx.user.search_config or {}
     personal = profile["personal"]
 
     # --- Resolve resume PDF path ---

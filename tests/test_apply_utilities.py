@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 
 from typer.testing import CliRunner
@@ -12,6 +13,20 @@ from applypilot.database import close_connection, init_db
 
 
 runner = CliRunner()
+
+
+def _fake_ctx(conn):
+    class _FakeDB:
+        def __init__(self, c):
+            self._c = c
+
+        def connection(self):
+            return self._c
+
+    return SimpleNamespace(
+        user=SimpleNamespace(db=_FakeDB(conn), profile={}, search_config={}, resume_text=""),
+        task=SimpleNamespace(),
+    )
 
 
 def _make_test_dir() -> Path:
@@ -40,9 +55,7 @@ def test_remove_expired_deletes_expired_jobs(monkeypatch) -> None:
         _insert_job(conn, "https://example.com/keep-captcha", apply_status="failed", apply_error="captcha")
         conn.commit()
 
-        monkeypatch.setattr(launcher, "get_connection", lambda: conn)
-
-        removed = launcher.remove_expired()
+        removed = launcher.remove_expired(ctx=_fake_ctx(conn))
 
         assert removed == 2
         rows = conn.execute("SELECT url FROM jobs ORDER BY url").fetchall()
@@ -62,9 +75,7 @@ def test_reset_in_progress_clears_stuck_worker_locks(monkeypatch) -> None:
         _insert_job(conn, "https://example.com/failed", apply_status="failed", agent_id=None, apply_attempts=1)
         conn.commit()
 
-        monkeypatch.setattr(launcher, "get_connection", lambda: conn)
-
-        reset = launcher.reset_in_progress()
+        reset = launcher.reset_in_progress(ctx=_fake_ctx(conn))
 
         assert reset == 1
         rows = conn.execute("SELECT url, apply_status, agent_id FROM jobs ORDER BY url").fetchall()
@@ -77,8 +88,8 @@ def test_reset_in_progress_clears_stuck_worker_locks(monkeypatch) -> None:
 
 
 def test_apply_remove_expired_cli(monkeypatch) -> None:
-    monkeypatch.setattr(cli, "_bootstrap", lambda: None)
-    monkeypatch.setattr("applypilot.apply.launcher.remove_expired", lambda: 3)
+    monkeypatch.setattr(cli, "_bootstrap", lambda: _fake_ctx(None))
+    monkeypatch.setattr("applypilot.apply.launcher.remove_expired", lambda ctx=None: 3)
 
     result = runner.invoke(cli.app, ["apply", "--remove-expired"])
 
@@ -87,8 +98,8 @@ def test_apply_remove_expired_cli(monkeypatch) -> None:
 
 
 def test_apply_reset_in_progress_cli(monkeypatch) -> None:
-    monkeypatch.setattr(cli, "_bootstrap", lambda: None)
-    monkeypatch.setattr("applypilot.apply.launcher.reset_in_progress", lambda: 2)
+    monkeypatch.setattr(cli, "_bootstrap", lambda: _fake_ctx(None))
+    monkeypatch.setattr("applypilot.apply.launcher.reset_in_progress", lambda ctx=None: 2)
 
     result = runner.invoke(cli.app, ["apply", "--reset-in-progress"])
 
@@ -99,7 +110,7 @@ def test_apply_reset_in_progress_cli(monkeypatch) -> None:
 def test_apply_kill_chrome_cli(monkeypatch) -> None:
     calls: list[str] = []
 
-    monkeypatch.setattr(cli, "_bootstrap", lambda: None)
+    monkeypatch.setattr(cli, "_bootstrap", lambda: _fake_ctx(None))
     monkeypatch.setattr("applypilot.apply.chrome.kill_all_chrome", lambda: calls.append("killed"))
 
     result = runner.invoke(cli.app, ["apply", "--kill-chrome"])

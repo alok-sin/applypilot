@@ -16,12 +16,13 @@ def test_run_enrichment_passes_headless_to_detail_scraper(monkeypatch) -> None:
         def close(self) -> None:
             return None
 
-    monkeypatch.setattr(detail, "init_db", lambda: _Conn())
+    monkeypatch.setattr(detail, "init_db_for_ctx", lambda ctx: _Conn())
+    monkeypatch.setattr(detail, "get_client_for_ctx", lambda ctx, task: None)
     monkeypatch.setattr(detail, "resolve_all_urls", lambda conn: {"resolved": 0, "already_absolute": 0, "failed": 0})
     monkeypatch.setattr(
         detail,
         "_run_detail_scraper",
-        lambda conn, max_per_site, workers, headless: captured.update({
+        lambda conn, max_per_site, workers, headless, ctx=None, client=None: captured.update({
             "max_per_site": max_per_site,
             "workers": workers,
             "headless": headless,

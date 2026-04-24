@@ -14,7 +14,6 @@ class _CaptureClient:
 
 def test_score_job_emits_three_messages_with_cache_markers(monkeypatch) -> None:
     cap = _CaptureClient()
-    monkeypatch.setattr(scorer, "get_client", lambda *a, **k: cap)
 
     job = {
         "title": "Engineer",
@@ -22,7 +21,7 @@ def test_score_job_emits_three_messages_with_cache_markers(monkeypatch) -> None:
         "location": "Remote",
         "full_description": "Build stuff.",
     }
-    scorer.score_job("RESUME BODY", job)
+    scorer.score_job("RESUME BODY", job, client=cap)
 
     assert len(cap.captured) == 1
     msgs = cap.captured[0]
@@ -47,13 +46,12 @@ def test_score_job_keeps_system_and_resume_byte_identical_across_jobs(monkeypatc
     """Regression guard: if per-job content leaks into the cached blocks,
     the cache-read path never fires and we pay full price every call."""
     cap = _CaptureClient()
-    monkeypatch.setattr(scorer, "get_client", lambda *a, **k: cap)
 
     job_a = {"title": "A", "site": "X", "location": "L1", "full_description": "aaa"}
     job_b = {"title": "B", "site": "Y", "location": "L2", "full_description": "bbb"}
 
-    scorer.score_job("RESUME", job_a)
-    scorer.score_job("RESUME", job_b)
+    scorer.score_job("RESUME", job_a, client=cap)
+    scorer.score_job("RESUME", job_b, client=cap)
 
     assert cap.captured[0][0]["content"] == cap.captured[1][0]["content"]
     assert cap.captured[0][1]["content"] == cap.captured[1][1]["content"]

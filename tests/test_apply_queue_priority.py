@@ -2,10 +2,25 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 
 from applypilot.apply import launcher
 from applypilot.database import close_connection, init_db
+
+
+def _fake_ctx(conn):
+    class _FakeDB:
+        def __init__(self, c):
+            self._c = c
+
+        def connection(self):
+            return self._c
+
+    return SimpleNamespace(
+        user=SimpleNamespace(db=_FakeDB(conn), profile={}, search_config={}, resume_text=""),
+        task=SimpleNamespace(),
+    )
 
 
 def _make_test_dir() -> Path:
@@ -59,10 +74,9 @@ def test_acquire_job_prioritizes_untried_before_retries(monkeypatch) -> None:
         )
         conn.commit()
 
-        monkeypatch.setattr(launcher, "get_connection", lambda: conn)
         monkeypatch.setattr(launcher, "_load_blocked", lambda: ([], []))
 
-        job = launcher.acquire_job(min_score=7, worker_id=7)
+        job = launcher.acquire_job(min_score=7, worker_id=7, ctx=_fake_ctx(conn))
 
         assert job is not None
         assert job["url"] == fresh_url

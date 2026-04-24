@@ -2,16 +2,30 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 
 from typer.testing import CliRunner
 
 import applypilot.cli as cli
-import applypilot.database as database
 from applypilot.database import close_connection, init_db
 
 
 runner = CliRunner()
+
+
+def _fake_ctx(conn):
+    class _FakeDB:
+        def __init__(self, c):
+            self._c = c
+
+        def connection(self):
+            return self._c
+
+    return SimpleNamespace(
+        user=SimpleNamespace(db=_FakeDB(conn), profile={}, search_config={}, resume_text=""),
+        task=SimpleNamespace(),
+    )
 
 
 def _make_test_dir() -> Path:
@@ -28,8 +42,7 @@ def test_add_url_inserts_job_with_defaults(monkeypatch) -> None:
 
     try:
         conn = init_db(db_path)
-        monkeypatch.setattr(cli, "_bootstrap", lambda: None)
-        monkeypatch.setattr(database, "get_connection", lambda: conn)
+        monkeypatch.setattr(cli, "_bootstrap", lambda: _fake_ctx(conn))
 
         target = "https://example.com/jobs/123"
         result = runner.invoke(cli.app, ["add-url", target, "--title", "Example Job"])

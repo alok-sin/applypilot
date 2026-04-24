@@ -4,9 +4,26 @@ import os
 import sys
 import sqlite3
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
+
+
+def _ctx_for_conn(conn):
+    """Minimal RunContext-shaped object backed by a specific sqlite conn."""
+
+    class _FakeDB:
+        def __init__(self, c):
+            self._c = c
+
+        def connection(self):
+            return self._c
+
+    return SimpleNamespace(
+        user=SimpleNamespace(db=_FakeDB(conn)),
+        task=SimpleNamespace(),
+    )
 
 # Ensure src is on sys.path for tests when running from repo root
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -370,8 +387,7 @@ class TestStoreJobs:
             }
         ]
 
-        with patch("applypilot.discovery.greenhouse.get_connection", return_value=conn):
-            new, existing = _store_jobs(jobs)
+        new, existing = _store_jobs(jobs, ctx=_ctx_for_conn(conn))
 
         assert new == 1
         assert existing == 0
@@ -416,15 +432,15 @@ class TestStoreJobs:
             }
         ]
 
-        with patch("applypilot.discovery.greenhouse.get_connection", return_value=conn):
-            # Store first time
-            new, existing = _store_jobs(jobs)
-            assert new == 1
+        ctx = _ctx_for_conn(conn)
+        # Store first time
+        new, existing = _store_jobs(jobs, ctx=ctx)
+        assert new == 1
 
-            # Store again - should be duplicate
-            new, existing = _store_jobs(jobs)
-            assert new == 0
-            assert existing == 1
+        # Store again - should be duplicate
+        new, existing = _store_jobs(jobs, ctx=ctx)
+        assert new == 0
+        assert existing == 1
 
     def test_store_multiple_jobs(self, tmp_path):
         """Test storing multiple jobs at once."""
@@ -467,8 +483,7 @@ class TestStoreJobs:
             },
         ]
 
-        with patch("applypilot.discovery.greenhouse.get_connection", return_value=conn):
-            new, existing = _store_jobs(jobs)
+        new, existing = _store_jobs(jobs, ctx=_ctx_for_conn(conn))
 
         assert new == 2
         assert existing == 0
@@ -481,8 +496,7 @@ class TestIntegration:
     """Integration-style tests."""
 
     @patch("applypilot.discovery.greenhouse.fetch_jobs_api")
-    @patch("applypilot.discovery.greenhouse.get_connection")
-    def test_end_to_end_search_and_store(self, mock_get_conn, mock_fetch, tmp_path):
+    def test_end_to_end_search_and_store(self, mock_fetch, tmp_path):
         """Test full flow from fetch to parse to store using the API client."""
         # Setup mock API response
         api_response = {
@@ -519,8 +533,6 @@ class TestIntegration:
                 detail_error TEXT
             )
         """)
-        mock_get_conn.return_value = conn
-
         # Run search (returns jobs but doesn't store them - search_all does that)
         employer = {"name": "TestCorp"}
         jobs = search_employer("testcorp", employer, "ML")
@@ -532,7 +544,7 @@ class TestIntegration:
         # Manually store jobs to test _store_jobs integration
         from applypilot.discovery.greenhouse import _store_jobs
 
-        new, existing = _store_jobs(jobs)
+        new, existing = _store_jobs(jobs, ctx=_ctx_for_conn(conn))
 
         # Verify stored in DB
         assert new == 1

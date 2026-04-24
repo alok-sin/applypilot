@@ -1,6 +1,22 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import applypilot.discovery.smartextract as smartextract
+
+
+def _fake_ctx(conn):
+    class _FakeDB:
+        def __init__(self, c):
+            self._c = c
+
+        def connection(self):
+            return self._c
+
+    return SimpleNamespace(
+        user=SimpleNamespace(db=_FakeDB(conn), profile={}, search_config={}, resume_text=""),
+        task=SimpleNamespace(),
+    )
 
 
 def test_run_one_site_returns_error_when_intelligence_collection_times_out(monkeypatch) -> None:
@@ -9,7 +25,7 @@ def test_run_one_site_returns_error_when_intelligence_collection_times_out(monke
 
     monkeypatch.setattr(smartextract, "collect_page_intelligence", _raise_timeout)
 
-    result = smartextract._run_one_site("Lensa", "https://lensa.com/jobs?q=vp")
+    result = smartextract._run_one_site("Lensa", "https://lensa.com/jobs?q=vp", client=None)
 
     assert result["name"] == "Lensa"
     assert result["status"] == "INTEL_ERROR"
@@ -32,7 +48,7 @@ def test_run_all_continues_when_one_worker_raises(monkeypatch) -> None:
         {"name": "Healthy", "url": "https://example.com/healthy", "query": None},
     ]
 
-    def _fake_run_one_site(name: str, url: str, query=None) -> dict:
+    def _fake_run_one_site(name: str, url: str, query=None, *, client=None) -> dict:
         if name == "Broken":
             raise TimeoutError("Timeout 30000ms exceeded.")
         return {
@@ -44,11 +60,15 @@ def test_run_all_continues_when_one_worker_raises(monkeypatch) -> None:
             "jobs": [{"url": "https://jobs.example.com/1", "title": "VP of IT", "location": "Remote"}],
         }
 
-    monkeypatch.setattr(smartextract, "init_db", lambda: _Conn())
+    conn = _Conn()
+    monkeypatch.setattr(smartextract, "init_db_for_ctx", lambda ctx: conn)
     monkeypatch.setattr(smartextract, "get_stats", lambda conn: {"total": 0, "pending_detail": 0})
     monkeypatch.setattr(smartextract, "_run_one_site", _fake_run_one_site)
 
-    result = smartextract._run_all(targets, accept_locs=[], reject_locs=[], workers=2)
+    result = smartextract._run_all(
+        targets, accept_locs=[], reject_locs=[], workers=2,
+        ctx=_fake_ctx(conn), client=None,
+    )
 
     assert result["total"] == 2
     assert result["passed"] == 1

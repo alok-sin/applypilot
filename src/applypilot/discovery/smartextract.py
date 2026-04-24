@@ -28,10 +28,16 @@ import yaml
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 
+from typing import TYPE_CHECKING
+
 from applypilot import config
 from applypilot.config import CONFIG_DIR
-from applypilot.database import init_db, get_stats
-from applypilot.llm import get_client
+from applypilot.core import build_default_run_context
+from applypilot.database import get_stats, init_db_for_ctx
+from applypilot.llm import LLMClient, get_client_for_ctx
+
+if TYPE_CHECKING:
+    from applypilot.core import RunContext
 
 log = logging.getLogger(__name__)
 
@@ -582,12 +588,11 @@ or
 No explanation, no markdown, no thinking."""
 
 
-def judge_api_responses(api_responses: list[dict]) -> list[dict]:
+def judge_api_responses(api_responses: list[dict], *, client: LLMClient) -> list[dict]:
     """Use the LLM to filter API responses, keeping only job-relevant ones."""
     if not api_responses:
         return []
 
-    client = get_client("discover")
     relevant: list[dict] = []
     skipped = 0
 
@@ -871,9 +876,8 @@ PAGE HTML:
 
 # -- LLM helpers -------------------------------------------------------------
 
-def ask_llm(prompt: str) -> tuple[str, float, dict]:
+def ask_llm(prompt: str, *, client: LLMClient) -> tuple[str, float, dict]:
     """Send prompt to LLM. Returns (response_text, seconds_taken, metadata)."""
-    client = get_client("discover")
     t0 = time.time()
     text = client.chat([{"role": "user", "content": prompt}], max_output_tokens=4096)
     elapsed = time.time() - t0
@@ -1063,7 +1067,7 @@ def execute_api_response(intel: dict, plan: dict) -> list[dict]:
     return jobs
 
 
-def execute_css_selectors(intel: dict) -> tuple[dict, list[dict]]:
+def execute_css_selectors(intel: dict, *, client: LLMClient) -> tuple[dict, list[dict]]:
     """Phase 2: Send full cleaned page HTML to LLM for card detection + selector generation.
     Returns (selectors, jobs)."""
     full_html = intel.get("full_html", "")
@@ -1077,7 +1081,7 @@ def execute_css_selectors(intel: dict) -> tuple[dict, list[dict]]:
     prompt = FULL_PAGE_SELECTOR_PROMPT.format(page_html=cleaned)
 
     try:
-        raw, elapsed, meta = ask_llm(prompt)
+        raw, elapsed, meta = ask_llm(prompt, client=client)
     except Exception as e:
         log.error("LLM_ERROR in Phase 2: %s", e)
         return {}, []
@@ -1130,7 +1134,7 @@ def execute_css_selectors(intel: dict) -> tuple[dict, list[dict]]:
 
 # -- Main per-site extraction ------------------------------------------------
 
-def _run_one_site(name: str, url: str, query: str | None = None) -> dict:
+def _run_one_site(name: str, url: str, query: str | None = None, *, client: LLMClient) -> dict:
     """Run full smart extraction pipeline on one site URL."""
     log.info("=" * 60)
     log.info("%s: %s", name, url)
@@ -1169,7 +1173,7 @@ def _run_one_site(name: str, url: str, query: str | None = None) -> dict:
     # Step 1.5: Judge filters API responses
     if intel["api_responses"]:
         log.info("[1.5] Judge filtering API responses...")
-        intel["api_responses"] = judge_api_responses(intel["api_responses"])
+        intel["api_responses"] = judge_api_responses(intel["api_responses"], client=client)
         log.info("Kept %d relevant responses", len(intel["api_responses"]))
 
     # Step 2: Strategy selection
@@ -1178,7 +1182,7 @@ def _run_one_site(name: str, url: str, query: str | None = None) -> dict:
 
     prompt = STRATEGY_PROMPT.format(briefing=briefing)
     try:
-        raw, elapsed, meta = ask_llm(prompt)
+        raw, elapsed, meta = ask_llm(prompt, client=client)
     except Exception as e:
         log.error("LLM_ERROR: %s", e)
         return {"name": name, "status": "LLM_ERROR", "error": str(e)}
@@ -1206,7 +1210,7 @@ def _run_one_site(name: str, url: str, query: str | None = None) -> dict:
             jobs = execute_api_response(intel, plan)
         elif strategy == "css_selectors":
             log.info("-> Phase 2: Generating selectors from card examples...")
-            selectors, jobs = execute_css_selectors(intel)
+            selectors, jobs = execute_css_selectors(intel, client=client)
             plan["extraction"] = selectors
         else:
             log.warning("Unknown strategy: %s", strategy)
@@ -1313,13 +1317,16 @@ def _run_all(
     accept_locs: list[str],
     reject_locs: list[str],
     workers: int = 1,
+    *,
+    ctx: "RunContext",
+    client: LLMClient,
 ) -> dict:
     """Run smart extract on all targets.
 
     Sequential by default. When workers > 1, scrapes multiple sites in parallel
     using ThreadPoolExecutor. DB storage is still serialized after each result.
     """
-    conn = init_db()
+    conn = init_db_for_ctx(ctx)
     pre_stats = get_stats(conn)
     log.info("Database: %d jobs already stored, %d pending detail scrape",
              pre_stats["total"], pre_stats["pending_detail"])
@@ -1343,7 +1350,7 @@ def _run_all(
         # Parallel mode
         with ThreadPoolExecutor(max_workers=min(workers, len(targets))) as pool:
             future_to_target = {
-                pool.submit(_run_one_site, target["name"], target["url"], target.get("query")): target
+                pool.submit(_run_one_site, target["name"], target["url"], target.get("query"), client=client): target
                 for target in targets
             }
             for future in as_completed(future_to_target):
@@ -1364,7 +1371,7 @@ def _run_all(
             log.info("[%d/%d] %s", i + 1, len(targets), label)
 
             try:
-                r = _run_one_site(target["name"], target["url"], target.get("query"))
+                r = _run_one_site(target["name"], target["url"], target.get("query"), client=client)
             except Exception as e:
                 log.error("%s failed: %s", target["name"], e)
                 r = _site_error_result(target["name"], "SITE_ERROR", e)
@@ -1392,6 +1399,7 @@ def _run_all(
 def run_smart_extract(
     sites: list[dict] | None = None,
     workers: int = 1,
+    ctx: "RunContext | None" = None,
 ) -> dict:
     """Main entry point for AI-powered smart extraction.
 
@@ -1401,11 +1409,15 @@ def run_smart_extract(
     Args:
         sites: Override the site list. If None, loads from YAML.
         workers: Number of parallel threads for site scraping. Default 1 (sequential).
+        ctx: Optional :class:`RunContext`. When ``None`` a CLI-default
+            context is built from ``APP_DIR``.
 
     Returns:
         Dict with stats: total_new, total_existing, passed, total.
     """
-    search_cfg = config.load_search_config()
+    if ctx is None:
+        ctx = build_default_run_context()
+    search_cfg = ctx.user.search_config or {}
     accept_locs, reject_locs = _load_location_filter(search_cfg)
 
     sites = sites if sites is not None else load_sites()
@@ -1422,4 +1434,5 @@ def run_smart_extract(
     log.info("Sites: %d searchable, %d static | Total targets: %d (workers=%d)",
              search_sites, static_sites, len(targets), workers)
 
-    return _run_all(targets, accept_locs, reject_locs, workers=workers)
+    client = get_client_for_ctx(ctx, "discover")
+    return _run_all(targets, accept_locs, reject_locs, workers=workers, ctx=ctx, client=client)

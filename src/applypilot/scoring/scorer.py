@@ -9,12 +9,15 @@ import logging
 import re
 import time
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
-from applypilot import config
-from applypilot.config import RESUME_PATH
-from applypilot.database import get_connection, get_jobs_by_stage, mark_filtered
+from applypilot.core import build_default_run_context
+from applypilot.database import get_jobs_by_stage, mark_filtered
 from applypilot.discovery.filters import apply_rule_gate
-from applypilot.llm import get_client
+from applypilot.llm import LLMClient, get_client_for_ctx
+
+if TYPE_CHECKING:
+    from applypilot.core import RunContext
 
 log = logging.getLogger(__name__)
 
@@ -115,15 +118,12 @@ def build_job_context(job: dict, max_desc_chars: int = 6000) -> str:
     return f"{header}\nDESCRIPTION:\n{(job.get('full_description') or '')[:max_desc_chars]}"
 
 
-def score_job(resume_text: str, job: dict) -> dict:
+def score_job(resume_text: str, job: dict, *, client: LLMClient) -> dict:
     """Score a single job against the resume.
 
-    Args:
-        resume_text: The candidate's full resume text.
-        job: Job dict with keys: title, site, location, full_description.
-
-    Returns:
-        {"score": int, "keywords": str, "reasoning": str}
+    The ``client`` is passed in rather than looked up here — ``run_scoring``
+    builds it once per run so all jobs in a batch share the same cached
+    system prompt + resume blocks.
     """
     job_text = (
         f"TITLE: {job['title']}\n"
@@ -132,8 +132,6 @@ def score_job(resume_text: str, job: dict) -> dict:
         f"DESCRIPTION:\n{(job.get('full_description') or '')[:6000]}"
     )
 
-    # Split so the system prompt + resume form stable cached blocks across
-    # every score call; the per-job posting is the only varying segment.
     messages = [
         {"role": "system", "content": SCORE_PROMPT, "cache": "ephemeral"},
         {"role": "user", "content": f"RESUME:\n{resume_text}", "cache": "ephemeral"},
@@ -141,7 +139,6 @@ def score_job(resume_text: str, job: dict) -> dict:
     ]
 
     try:
-        client = get_client("score")
         response = client.chat(messages, max_output_tokens=1024)
         return _parse_score_response(response)
     except Exception as e:
@@ -153,6 +150,7 @@ def run_scoring(
     limit: int = 0,
     rescore: bool = False,
     rescore_above: int | None = None,
+    ctx: "RunContext | None" = None,
 ) -> dict:
     """Score unscored jobs that have full descriptions.
 
@@ -161,12 +159,17 @@ def run_scoring(
         rescore: If True, re-score all jobs (not just unscored ones).
         rescore_above: If set, re-score only jobs with fit_score >= this value.
             Takes precedence over `rescore`.
+        ctx: Optional :class:`RunContext`. When ``None`` a CLI-default
+            context is built from ``APP_DIR``.
 
     Returns:
         {"scored": int, "errors": int, "elapsed": float, "distribution": list}
     """
-    resume_text = RESUME_PATH.read_text(encoding="utf-8")
-    conn = get_connection()
+    if ctx is None:
+        ctx = build_default_run_context()
+
+    resume_text = ctx.user.resume_text
+    conn = ctx.user.db.connection()
 
     if rescore_above is not None:
         query = (
@@ -198,11 +201,8 @@ def run_scoring(
         columns = jobs[0].keys()
         jobs = [dict(zip(columns, row)) for row in jobs]
 
-    search_cfg = config.load_search_config() or {}
-    try:
-        profile = config.load_profile()
-    except FileNotFoundError:
-        profile = {}
+    search_cfg = ctx.user.search_config or {}
+    profile = ctx.user.profile or {}
     jobs = apply_rule_gate(jobs, search_cfg, profile, conn)
     if not jobs:
         log.info("All candidate jobs filtered by rule gate; nothing to score.")
@@ -215,8 +215,14 @@ def run_scoring(
     results: list[dict] = []
     now = datetime.now(timezone.utc).isoformat()
 
+    client = get_client_for_ctx(ctx, "score")
+    cancel = ctx.task.cancellation
+
     for job in jobs:
-        result = score_job(resume_text, job)
+        if cancel.is_set():
+            log.info("Scoring cancelled after %d/%d jobs", completed, len(jobs))
+            break
+        result = score_job(resume_text, job, client=client)
         result["url"] = job["url"]
         completed += 1
 

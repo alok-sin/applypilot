@@ -22,7 +22,8 @@ from rich.panel import Panel
 from rich.table import Table
 
 from applypilot.config import load_env, ensure_dirs
-from applypilot.database import init_db, get_connection, get_stats
+from applypilot.core import RunContext, build_default_run_context
+from applypilot.database import init_db_for_ctx, get_stats_for_ctx
 
 log = logging.getLogger(__name__)
 console = Console()
@@ -59,20 +60,22 @@ _UPSTREAM: dict[str, str | None] = {
 # Individual stage runners
 # ---------------------------------------------------------------------------
 
-def _run_discover(workers: int = 1, site_filter: list[str] | None = None) -> dict:
+def _run_discover(workers: int = 1, site_filter: list[str] | None = None,
+                  ctx: "RunContext | None" = None) -> dict:
     """Stage: Job discovery — JobSpy, Workday, and smart-extract scrapers."""
+    if ctx is None:
+        ctx = build_default_run_context()
     stats: dict = {"jobspy": None, "workday": None, "smartextract": None, "greenhouse": None, "smartrecruiters": None}
 
     if site_filter:
+        # Everything except smartextract is skipped when --site-filter is used.
+        for backend in ("jobspy", "workday", "greenhouse", "smartrecruiters"):
+            stats[backend] = "skipped (site-filter)"
+
         filters = [s.strip().lower() for s in site_filter if s and s.strip()]
         if not filters:
-            return {
-                "jobspy": "skipped (site-filter)",
-                "workday": "skipped (site-filter)",
-                "smartextract": "error: empty site-filter",
-                "greenhouse": "skipped (site-filter)",
-                "smartrecruiters": "skipped (site-filter)",
-            }
+            stats["smartextract"] = "error: empty site-filter"
+            return stats
 
         console.print(f"  [cyan]Smart extract (filtered sites): {', '.join(site_filter)}[/cyan]")
         try:
@@ -95,27 +98,18 @@ def _run_discover(workers: int = 1, site_filter: list[str] | None = None) -> dic
                 available = ", ".join(sorted({str(s.get("name", "")).strip() for s in configured_sites if s.get("name")})) or "none"
                 raise ValueError(f"No sites matched site-filter={site_filter}. Available sites: {available}")
 
-            run_smart_extract(sites=matched_sites, workers=workers)
-            stats["jobspy"] = "skipped (site-filter)"
-            stats["workday"] = "skipped (site-filter)"
+            run_smart_extract(sites=matched_sites, workers=workers, ctx=ctx)
             stats["smartextract"] = "ok"
-            stats["greenhouse"] = "skipped (site-filter)"
-            stats["smartrecruiters"] = "skipped (site-filter)"
         except Exception as e:
             log.error("Smart extract (filtered) failed: %s", e)
             console.print(f"  [red]Smart extract error:[/red] {e}")
-            stats["jobspy"] = "skipped (site-filter)"
-            stats["workday"] = "skipped (site-filter)"
             stats["smartextract"] = f"error: {e}"
-            stats["greenhouse"] = "skipped (site-filter)"
-            stats["smartrecruiters"] = "skipped (site-filter)"
-        stats["rule_gate"] = _run_rule_gate()
-        stats["llm_sweep"] = _run_llm_sweep()
+        stats["rule_gate"] = _run_rule_gate(ctx=ctx)
+        stats["llm_sweep"] = _run_llm_sweep(ctx=ctx)
         return stats
 
     # Backend gating: if discover_backends is set, only run listed backends
-    from applypilot.config import load_search_config
-    search_cfg = load_search_config()
+    search_cfg = ctx.user.search_config or {}
     allowed_backends = search_cfg.get("discover_backends") or []
     if allowed_backends:
         allowed_set = {b.strip().lower() for b in allowed_backends}
@@ -138,7 +132,7 @@ def _run_discover(workers: int = 1, site_filter: list[str] | None = None) -> dic
         console.print("  [cyan]JobSpy full crawl...[/cyan]")
         try:
             from applypilot.discovery.jobspy import run_discovery
-            run_discovery()
+            run_discovery(ctx=ctx)
             stats["jobspy"] = "ok"
         except Exception as e:
             log.error("JobSpy crawl failed: %s", e)
@@ -152,7 +146,7 @@ def _run_discover(workers: int = 1, site_filter: list[str] | None = None) -> dic
         console.print("  [cyan]Workday corporate scraper...[/cyan]")
         try:
             from applypilot.discovery.workday import run_workday_discovery
-            run_workday_discovery(workers=workers)
+            run_workday_discovery(workers=workers, ctx=ctx)
             stats["workday"] = "ok"
         except Exception as e:
             log.error("Workday scraper failed: %s", e)
@@ -166,7 +160,7 @@ def _run_discover(workers: int = 1, site_filter: list[str] | None = None) -> dic
         console.print("  [cyan]Smart extract (AI-powered scraping)...[/cyan]")
         try:
             from applypilot.discovery.smartextract import run_smart_extract
-            run_smart_extract(workers=workers)
+            run_smart_extract(workers=workers, ctx=ctx)
             stats["smartextract"] = "ok"
         except Exception as e:
             log.error("Smart extract failed: %s", e)
@@ -180,7 +174,7 @@ def _run_discover(workers: int = 1, site_filter: list[str] | None = None) -> dic
         console.print("  [cyan]Greenhouse ATS scraper (AI startups)...[/cyan]")
         try:
             from applypilot.discovery.greenhouse import search_all
-            new, existing = search_all("", workers=workers)
+            new, existing = search_all("", workers=workers, ctx=ctx)
             stats["greenhouse"] = f"ok ({new} new, {existing} existing)"
         except Exception as e:
             log.error("Greenhouse scraper failed: %s", e)
@@ -194,7 +188,7 @@ def _run_discover(workers: int = 1, site_filter: list[str] | None = None) -> dic
         console.print("  [cyan]SmartRecruiters ATS scraper (Bosch, Visa, ServiceNow, ...)...[/cyan]")
         try:
             from applypilot.discovery.smartrecruiters import search_all as sr_search_all
-            new, existing = sr_search_all("", workers=workers)
+            new, existing = sr_search_all("", workers=workers, ctx=ctx)
             stats["smartrecruiters"] = f"ok ({new} new, {existing} existing)"
         except Exception as e:
             log.error("SmartRecruiters scraper failed: %s", e)
@@ -207,7 +201,7 @@ def _run_discover(workers: int = 1, site_filter: list[str] | None = None) -> dic
     # stages and the rule gate see absolute hrefs.
     try:
         from applypilot.enrichment.detail import resolve_all_urls
-        url_stats = resolve_all_urls(get_connection())
+        url_stats = resolve_all_urls(ctx.user.db.connection())
         log.info("URL resolve: %d resolved, %d already absolute, %d failed",
                  url_stats["resolved"], url_stats["already_absolute"], url_stats["failed"])
     except Exception as e:
@@ -215,26 +209,26 @@ def _run_discover(workers: int = 1, site_filter: list[str] | None = None) -> dic
 
     # Post-discover filtering: rule gate + cheap LLM sweep. Both write to
     # the `filter_reason` column so downstream stages skip rejects.
-    stats["rule_gate"] = _run_rule_gate()
-    stats["llm_sweep"] = _run_llm_sweep()
+    stats["rule_gate"] = _run_rule_gate(ctx=ctx)
+    stats["llm_sweep"] = _run_llm_sweep(ctx=ctx)
 
     return stats
 
 
-def _run_rule_gate() -> str:
+def _run_rule_gate(ctx: "RunContext | None" = None) -> str:
     """Layer 2: deterministic rule gate across all unfiltered discovered rows."""
     try:
-        from applypilot.config import load_profile, load_search_config
         from applypilot.discovery.filters import rule_evaluate
 
-        search_cfg = load_search_config() or {}
-        try:
-            profile = load_profile()
-        except FileNotFoundError:
+        if ctx is None:
+            ctx = build_default_run_context()
+        search_cfg = ctx.user.search_config or {}
+        profile = ctx.user.profile
+        if not profile:
             log.info("Rule gate skipped — no profile found.")
             return "skipped (no profile)"
 
-        conn = get_connection()
+        conn = ctx.user.db.connection()
         rows = conn.execute(
             "SELECT url, title, location FROM jobs WHERE filter_reason IS NULL"
         ).fetchall()
@@ -259,11 +253,11 @@ def _run_rule_gate() -> str:
         return f"error: {e}"
 
 
-def _run_llm_sweep() -> str:
+def _run_llm_sweep(ctx: "RunContext | None" = None) -> str:
     """Layer 3: cheap per-job LLM classifier."""
     try:
         from applypilot.discovery.llm_sweep import run_llm_sweep
-        result = run_llm_sweep()
+        result = run_llm_sweep(ctx=ctx)
         if result.get("skipped"):
             console.print("  [yellow]LLM sweep skipped[/yellow]")
             return "skipped"
@@ -277,22 +271,24 @@ def _run_llm_sweep() -> str:
         return f"error: {e}"
 
 
-def _run_enrich(workers: int = 1, headless: bool = True) -> dict:
+def _run_enrich(workers: int = 1, headless: bool = True,
+                ctx: "RunContext | None" = None) -> dict:
     """Stage: Detail enrichment — scrape full descriptions and apply URLs."""
     try:
         from applypilot.enrichment.detail import run_enrichment
-        run_enrichment(workers=workers, headless=headless)
+        run_enrichment(workers=workers, headless=headless, ctx=ctx)
         return {"status": "ok"}
     except Exception as e:
         log.error("Enrichment failed: %s", e)
         return {"status": f"error: {e}"}
 
 
-def _run_score(rescore_above: int | None = None) -> dict:
+def _run_score(rescore_above: int | None = None,
+               ctx: "RunContext | None" = None) -> dict:
     """Stage: LLM scoring — assign fit scores 1-10."""
     try:
         from applypilot.scoring.scorer import run_scoring
-        run_scoring(rescore_above=rescore_above)
+        run_scoring(rescore_above=rescore_above, ctx=ctx)
         return {"status": "ok"}
     except Exception as e:
         log.error("Scoring failed: %s", e)
@@ -300,11 +296,12 @@ def _run_score(rescore_above: int | None = None) -> dict:
 
 
 def _run_tailor(min_score: int = 7, validation_mode: str = "normal",
-                limit: int = 20) -> dict:
+                limit: int = 20, ctx: "RunContext | None" = None) -> dict:
     """Stage: Resume tailoring — generate tailored resumes for high-fit jobs."""
     try:
         from applypilot.scoring.tailor import run_tailoring
-        run_tailoring(min_score=min_score, validation_mode=validation_mode, limit=limit)
+        run_tailoring(min_score=min_score, validation_mode=validation_mode,
+                      limit=limit, ctx=ctx)
         return {"status": "ok"}
     except Exception as e:
         log.error("Tailoring failed: %s", e)
@@ -312,22 +309,23 @@ def _run_tailor(min_score: int = 7, validation_mode: str = "normal",
 
 
 def _run_cover(min_score: int = 7, validation_mode: str = "normal",
-               limit: int = 20) -> dict:
+               limit: int = 20, ctx: "RunContext | None" = None) -> dict:
     """Stage: Cover letter generation."""
     try:
         from applypilot.scoring.cover_letter import run_cover_letters
-        run_cover_letters(min_score=min_score, validation_mode=validation_mode, limit=limit)
+        run_cover_letters(min_score=min_score, validation_mode=validation_mode,
+                          limit=limit, ctx=ctx)
         return {"status": "ok"}
     except Exception as e:
         log.error("Cover letter generation failed: %s", e)
         return {"status": f"error: {e}"}
 
 
-def _run_pdf() -> dict:
+def _run_pdf(ctx: "RunContext | None" = None) -> dict:
     """Stage: PDF conversion — convert tailored resumes and cover letters to PDF."""
     try:
         from applypilot.scoring.pdf import batch_convert
-        batch_convert()
+        batch_convert(ctx=ctx)
         return {"status": "ok"}
     except Exception as e:
         log.error("PDF conversion failed: %s", e)
@@ -429,15 +427,50 @@ _PENDING_SQL: dict[str, str] = {
 _STREAM_POLL_INTERVAL = 10
 
 
-def _count_pending(stage: str, min_score: int = 7) -> int:
+def _count_pending(stage: str, min_score: int = 7,
+                   ctx: "RunContext | None" = None) -> int:
     """Count pending work items for a stage."""
     sql = _PENDING_SQL.get(stage)
     if sql is None:
         return 0
-    conn = get_connection()
+    if ctx is None:
+        ctx = build_default_run_context()
+    conn = ctx.user.db.connection()
     if "?" in sql:
         return conn.execute(sql, (min_score,)).fetchone()[0]
     return conn.execute(sql).fetchone()[0]
+
+
+def _build_stage_kwargs(
+    stage: str,
+    ctx: RunContext,
+    *,
+    min_score: int,
+    workers: int,
+    validation_mode: str,
+    headless: bool,
+    site_filter: list[str] | None,
+    rescore_above: int | None,
+    limit: int,
+) -> dict:
+    """Build the kwargs dict a given stage runner expects.
+
+    Centralized so sequential and streaming drivers pass identical arguments.
+    """
+    kwargs: dict = {"ctx": ctx}
+    if stage in ("tailor", "cover"):
+        kwargs["min_score"] = min_score
+        kwargs["validation_mode"] = validation_mode
+        kwargs["limit"] = limit
+    if stage in ("discover", "enrich"):
+        kwargs["workers"] = workers
+    if stage == "discover":
+        kwargs["site_filter"] = site_filter
+    if stage == "enrich":
+        kwargs["headless"] = headless
+    if stage == "score":
+        kwargs["rescore_above"] = rescore_above
+    return kwargs
 
 
 def _run_stage_streaming(
@@ -451,6 +484,7 @@ def _run_stage_streaming(
     site_filter: list[str] | None = None,
     rescore_above: int | None = None,
     limit: int = 20,
+    ctx: "RunContext | None" = None,
 ) -> None:
     """Run a single stage in streaming mode: loop until upstream done + no work.
 
@@ -459,19 +493,12 @@ def _run_stage_streaming(
     and repeats until upstream is done and no pending work remains.
     """
     runner = _STAGE_RUNNERS[stage]
-    kwargs: dict = {}
-    if stage in ("tailor", "cover"):
-        kwargs["min_score"] = min_score
-        kwargs["validation_mode"] = validation_mode
-        kwargs["limit"] = limit
-    if stage in ("discover", "enrich"):
-        kwargs["workers"] = workers
-    if stage == "discover":
-        kwargs["site_filter"] = site_filter
-    if stage == "enrich":
-        kwargs["headless"] = headless
-    if stage == "score":
-        kwargs["rescore_above"] = rescore_above
+    kwargs = _build_stage_kwargs(
+        stage, ctx,
+        min_score=min_score, workers=workers, validation_mode=validation_mode,
+        headless=headless, site_filter=site_filter,
+        rescore_above=rescore_above, limit=limit,
+    )
 
     upstream = _UPSTREAM[stage]
 
@@ -493,7 +520,7 @@ def _run_stage_streaming(
             # Wait a bit for upstream to produce some work before first run
             tracker.wait(upstream, timeout=_STREAM_POLL_INTERVAL)
 
-        pending = _count_pending(stage, min_score)
+        pending = _count_pending(stage, min_score, ctx=ctx)
 
         if pending > 0:
             try:
@@ -519,17 +546,22 @@ def _run_stage_streaming(
 # Pipeline orchestrators
 # ---------------------------------------------------------------------------
 
-def _run_sequential(ordered: list[str], min_score: int, workers: int = 1,
+def _run_sequential(ctx: RunContext, ordered: list[str], min_score: int, workers: int = 1,
                     validation_mode: str = "normal", headless: bool = True,
                     site_filter: list[str] | None = None,
                     rescore_above: int | None = None,
                     limit: int = 20) -> dict:
     """Execute stages one at a time (original behavior)."""
+    cancel = ctx.task.cancellation
+
     results: list[dict] = []
     errors: dict[str, str] = {}
     pipeline_start = time.time()
 
     for name in ordered:
+        if cancel.is_set():
+            console.print("\n  [yellow]Cancelled — skipping remaining stages.[/yellow]")
+            break
         meta = STAGE_META[name]
         console.print(f"\n{'=' * 70}")
         console.print(f"  [bold]STAGE: {name}[/bold] — {meta['desc']}")
@@ -540,19 +572,12 @@ def _run_sequential(ordered: list[str], min_score: int, workers: int = 1,
         runner = _STAGE_RUNNERS[name]
 
         try:
-            kwargs: dict = {}
-            if name in ("tailor", "cover"):
-                kwargs["min_score"] = min_score
-                kwargs["validation_mode"] = validation_mode
-                kwargs["limit"] = limit
-            if name in ("discover", "enrich"):
-                kwargs["workers"] = workers
-            if name == "discover":
-                kwargs["site_filter"] = site_filter
-            if name == "enrich":
-                kwargs["headless"] = headless
-            if name == "score":
-                kwargs["rescore_above"] = rescore_above
+            kwargs = _build_stage_kwargs(
+                name, ctx,
+                min_score=min_score, workers=workers, validation_mode=validation_mode,
+                headless=headless, site_filter=site_filter,
+                rescore_above=rescore_above, limit=limit,
+            )
             result = runner(**kwargs)
             elapsed = time.time() - t0
 
@@ -567,6 +592,11 @@ def _run_sequential(ordered: list[str], min_score: int, workers: int = 1,
                     if sub_errors:
                         status = "partial"
 
+        except KeyboardInterrupt:
+            elapsed = time.time() - t0
+            status = "cancelled"
+            cancel.set()
+            console.print(f"\n  [yellow]Stage '{name}' interrupted.[/yellow]")
         except Exception as e:
             elapsed = time.time() - t0
             status = f"error: {e}"
@@ -583,14 +613,19 @@ def _run_sequential(ordered: list[str], min_score: int, workers: int = 1,
     return {"stages": results, "errors": errors, "elapsed": total_elapsed}
 
 
-def _run_streaming(ordered: list[str], min_score: int, workers: int = 1,
+def _run_streaming(ctx: RunContext, ordered: list[str], min_score: int, workers: int = 1,
                    validation_mode: str = "normal", headless: bool = True,
                    site_filter: list[str] | None = None,
                    rescore_above: int | None = None,
                    limit: int = 20) -> dict:
     """Execute stages concurrently with DB as conveyor belt."""
+    # Streaming stages need Event.wait(timeout=...) semantics which aren't
+    # in the CancellationToken protocol — keep the module-global Event for
+    # stage polling, but route explicit cancellation through ctx so callers
+    # see a single source of truth.
+    from applypilot.cancellation import stop_event
+
     tracker = _StageTracker()
-    stop_event = threading.Event()
     pipeline_start = time.time()
 
     console.print("\n  [bold cyan]STREAMING MODE[/bold cyan] — stages run concurrently")
@@ -609,7 +644,7 @@ def _run_streaming(ordered: list[str], min_score: int, workers: int = 1,
         start_times[name] = time.time()
         t = threading.Thread(
             target=_run_stage_streaming,
-            args=(name, tracker, stop_event, min_score, workers, validation_mode, headless, site_filter, rescore_above, limit),
+            args=(name, tracker, stop_event, min_score, workers, validation_mode, headless, site_filter, rescore_above, limit, ctx),
             name=f"stage-{name}",
             daemon=True,
         )
@@ -627,6 +662,7 @@ def _run_streaming(ordered: list[str], min_score: int, workers: int = 1,
             )
     except KeyboardInterrupt:
         console.print("\n[yellow]Interrupted — stopping stages...[/yellow]")
+        ctx.task.cancellation.set()
         stop_event.set()
         for t in threads.values():
             t.join(timeout=10)
@@ -661,6 +697,7 @@ def run_pipeline(
     validation_mode: str = "normal",
     rescore_above: int | None = None,
     limit: int = 20,
+    ctx: RunContext | None = None,
 ) -> dict:
     """Run pipeline stages.
 
@@ -670,6 +707,10 @@ def run_pipeline(
         dry_run: If True, preview stages without executing.
         stream: If True, run stages concurrently (streaming mode).
         workers: Number of parallel threads for discovery/enrichment stages.
+        ctx: Optional pre-built :class:`RunContext`. When ``None`` (the CLI
+            default path), one is hydrated from the process-wide ``APP_DIR``
+            and its cancellation is wired to the module-global
+            ``stop_event`` so SIGINT still aborts the run.
 
     Returns:
         Dict with keys: stages (list of result dicts), errors (dict), elapsed (float).
@@ -677,7 +718,10 @@ def run_pipeline(
     # Bootstrap
     load_env()
     ensure_dirs()
-    init_db()
+
+    if ctx is None:
+        ctx = build_default_run_context()
+    init_db_for_ctx(ctx)
 
     # Resolve stages
     if stages is None:
@@ -700,7 +744,7 @@ def run_pipeline(
     console.print(f"  Stages:     {' -> '.join(ordered)}")
 
     # Pre-run stats
-    pre_stats = get_stats()
+    pre_stats = get_stats_for_ctx(ctx)
     console.print(f"  DB:        {pre_stats['total']} jobs, {pre_stats['pending_detail']} pending enrichment")
 
     if dry_run:
@@ -713,14 +757,14 @@ def run_pipeline(
 
     # Execute
     if stream:
-        result = _run_streaming(ordered, min_score, workers=workers,
+        result = _run_streaming(ctx, ordered, min_score, workers=workers,
                                 headless=headless,
                                 validation_mode=validation_mode,
                                 site_filter=site_filter,
                                 rescore_above=rescore_above,
                                 limit=limit)
     else:
-        result = _run_sequential(ordered, min_score, workers=workers,
+        result = _run_sequential(ctx, ordered, min_score, workers=workers,
                                  headless=headless,
                                  validation_mode=validation_mode,
                                  site_filter=site_filter,
@@ -750,7 +794,7 @@ def run_pipeline(
     console.print(summary)
 
     # Final DB stats
-    final = get_stats()
+    final = get_stats_for_ctx(ctx)
     console.print("\n  [bold]DB Final State:[/bold]")
     console.print(f"    Total jobs:     {final['total']}")
     console.print(f"    With desc:      {final['with_description']}")

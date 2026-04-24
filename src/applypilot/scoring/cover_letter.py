@@ -12,18 +12,20 @@ import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from applypilot import config
-from applypilot.config import COVER_LETTER_DIR, RESUME_PATH, load_profile
-from applypilot.database import get_connection
+from applypilot.core import build_default_run_context
 from applypilot.discovery.filters import apply_geo_gate
-from applypilot.llm import get_client
+from applypilot.llm import LLMClient, get_client_for_ctx
 from applypilot.scoring.validator import (
     BANNED_WORDS,
     LLM_LEAK_PHRASES,
     sanitize_text,
     validate_cover_letter,
 )
+
+if TYPE_CHECKING:
+    from applypilot.core import RunContext
 
 log = logging.getLogger(__name__)
 
@@ -142,6 +144,7 @@ def _strip_preamble(text: str) -> str:
 def generate_cover_letter(
     resume_text: str, job: dict, profile: dict,
     max_retries: int = 3, validation_mode: str = "normal",
+    *, client: "LLMClient",
 ) -> str:
     """Generate a cover letter with fresh context on each retry + auto-sanitize.
 
@@ -164,7 +167,6 @@ def generate_cover_letter(
 
     avoid_notes: list[str] = []
     letter = ""
-    client = get_client("cover")
     cl_prompt_base = _build_cover_letter_prompt(profile)
 
     for attempt in range(max_retries + 1):
@@ -204,23 +206,30 @@ def generate_cover_letter(
 # ── Batch Entry Point ────────────────────────────────────────────────────
 
 def run_cover_letters(min_score: int = 7, limit: int = 20,
-                      validation_mode: str = "normal") -> dict:
+                      validation_mode: str = "normal",
+                      ctx: "RunContext | None" = None) -> dict:
     """Generate cover letters for high-scoring jobs that have tailored resumes.
 
     Args:
         min_score:       Minimum fit_score threshold.
         limit:           Maximum jobs to process.
         validation_mode: "strict", "normal", or "lenient".
+        ctx:             Optional :class:`RunContext`. When ``None`` a
+            CLI-default context is built from ``APP_DIR``.
 
     Returns:
         {"generated": int, "errors": int, "elapsed": float}
     """
-    profile = load_profile()
-    if not RESUME_PATH.exists():
-        log.error("Resume file not found: %s. Run 'applypilot init' first.", RESUME_PATH)
+    if ctx is None:
+        ctx = build_default_run_context()
+
+    profile = ctx.user.profile or {}
+    resume_text = ctx.user.resume_text
+    if not resume_text:
+        log.error("Resume text is empty. Run 'applypilot init' first.")
         return {"generated": 0, "errors": 0, "elapsed": 0.0}
-    resume_text = RESUME_PATH.read_text(encoding="utf-8")
-    conn = get_connection()
+    conn = ctx.user.db.connection()
+    cover_dir = ctx.user.storage.cover_letter_dir()
 
     # Fetch jobs that have tailored resumes but no cover letter yet.
     # limit <= 0 means no cap — process every pending job.
@@ -247,12 +256,12 @@ def run_cover_letters(min_score: int = 7, limit: int = 20,
         columns = jobs[0].keys()
         jobs = [dict(zip(columns, row)) for row in jobs]
 
-    jobs = apply_geo_gate(jobs, config.load_search_config() or {}, conn)
+    jobs = apply_geo_gate(jobs, ctx.user.search_config or {}, conn)
     if not jobs:
         log.info("All cover-letter candidates filtered by geo_gate.")
         return {"generated": 0, "errors": 0, "elapsed": 0.0}
 
-    COVER_LETTER_DIR.mkdir(parents=True, exist_ok=True)
+    cover_dir.mkdir(parents=True, exist_ok=True)
     log.info(
         "Generating cover letters for %d jobs (score >= %d)...",
         len(jobs), min_score,
@@ -263,12 +272,19 @@ def run_cover_letters(min_score: int = 7, limit: int = 20,
     error_count = 0
     saved = 0
 
+    client = get_client_for_ctx(ctx, "cover")
+    cancel = ctx.task.cancellation
+
     for job in jobs:
+        if cancel.is_set():
+            log.info("Cover-letter generation cancelled after %d/%d jobs", completed, len(jobs))
+            break
         completed += 1
         try:
             job_resume = _load_tailored_resume_text(job, profile, resume_text)
             letter = generate_cover_letter(
-                job_resume, job, profile, validation_mode=validation_mode
+                job_resume, job, profile, validation_mode=validation_mode,
+                client=client,
             )
 
             # Build safe filename prefix. The URL-derived hash suffix keeps
@@ -279,7 +295,7 @@ def run_cover_letters(min_score: int = 7, limit: int = 20,
             url_hash = hashlib.blake2b(job["url"].encode("utf-8"), digest_size=4).hexdigest()
             prefix = f"{safe_site}_{safe_title}_{url_hash}"
 
-            cl_path = COVER_LETTER_DIR / f"{prefix}_CL.txt"
+            cl_path = cover_dir / f"{prefix}_CL.txt"
             cl_path.write_text(letter, encoding="utf-8")
 
             # Generate PDF (best-effort)
