@@ -8,6 +8,7 @@ search configuration YAML (searches.yaml) rather than being hardcoded.
 """
 
 import logging
+import socket
 import sqlite3
 import time
 from datetime import datetime, timezone
@@ -17,6 +18,14 @@ from jobspy import scrape_jobs
 
 from applypilot.core import build_default_run_context
 from applypilot.database import init_db_for_ctx
+
+# jobspy's Google scraper calls requests without a timeout, so a stalled
+# connection wedges the whole ThreadPoolExecutor in scrape_jobs forever.
+# Force a socket-level default so the read raises and _scrape_with_retry
+# can recover. Process-wide, but every other network client we use sets
+# its own explicit timeout, so this only catches the unset cases.
+if socket.getdefaulttimeout() is None:
+    socket.setdefaulttimeout(60)
 
 if TYPE_CHECKING:
     from applypilot.core import RunContext

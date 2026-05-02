@@ -184,12 +184,15 @@ def build_local_run_context(
     """
     import yaml  # lazy: keep core import cheap
 
+    from applypilot.prompts import load_prompts
+
     root = Path(data_dir)
     profile_path = root / "profile.json"
     resume_path = root / "resume.txt"
     resume_pdf_path = root / "resume.pdf"
     searches_path = root / "searches.yaml"
     llm_yaml_path = root / "llm.yaml"
+    prompts_yaml_path = root / "prompts.yaml"
     db_path = root / "applypilot.db"
 
     profile = json.loads(profile_path.read_text(encoding="utf-8")) if profile_path.exists() else {}
@@ -197,6 +200,7 @@ def build_local_run_context(
     resume_pdf = resume_pdf_path.read_bytes() if resume_pdf_path.exists() else None
     search_config = yaml.safe_load(searches_path.read_text(encoding="utf-8")) if searches_path.exists() else {}
     llm_config = yaml.safe_load(llm_yaml_path.read_text(encoding="utf-8")) if llm_yaml_path.exists() else {}
+    prompts = load_prompts(prompts_yaml_path)
 
     user = UserContext(
         user_id=user_id,
@@ -206,6 +210,7 @@ def build_local_run_context(
         resume_pdf=resume_pdf,
         search_config=search_config or {},
         llm_config=llm_config or {},
+        prompts=prompts,
         secrets=LocalSecretsProvider(root),
         storage=LocalStorageBackend(root),
         db=SqliteDatabase(db_path),

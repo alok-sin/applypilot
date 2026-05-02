@@ -95,6 +95,7 @@ class UserContext:
     resume_pdf: bytes | None
     search_config: dict
     llm_config: dict = field(default_factory=dict)
+    prompts: dict = field(default_factory=dict)
     secrets: SecretsProvider | None = None
     storage: StorageBackend | None = None
     db: Database | None = None

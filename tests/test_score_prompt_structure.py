@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from applypilot.scoring import scorer
 
+_SYSTEM_PROMPT = "You are a job fit evaluator. Score 1-10."
+
 
 class _CaptureClient:
     def __init__(self) -> None:
@@ -21,7 +23,7 @@ def test_score_job_emits_three_messages_with_cache_markers(monkeypatch) -> None:
         "location": "Remote",
         "full_description": "Build stuff.",
     }
-    scorer.score_job("RESUME BODY", job, client=cap)
+    scorer.score_job("RESUME BODY", job, client=cap, system_prompt=_SYSTEM_PROMPT)
 
     assert len(cap.captured) == 1
     msgs = cap.captured[0]
@@ -50,8 +52,8 @@ def test_score_job_keeps_system_and_resume_byte_identical_across_jobs(monkeypatc
     job_a = {"title": "A", "site": "X", "location": "L1", "full_description": "aaa"}
     job_b = {"title": "B", "site": "Y", "location": "L2", "full_description": "bbb"}
 
-    scorer.score_job("RESUME", job_a, client=cap)
-    scorer.score_job("RESUME", job_b, client=cap)
+    scorer.score_job("RESUME", job_a, client=cap, system_prompt=_SYSTEM_PROMPT)
+    scorer.score_job("RESUME", job_b, client=cap, system_prompt=_SYSTEM_PROMPT)
 
     assert cap.captured[0][0]["content"] == cap.captured[1][0]["content"]
     assert cap.captured[0][1]["content"] == cap.captured[1][1]["content"]

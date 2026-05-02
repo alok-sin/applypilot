@@ -1,0 +1,139 @@
+# Resume / cover-letter validator word lists.
+#
+# Keys here are the universal defaults shipped with ApplyPilot. The runtime
+# subtracts the user's `skills_boundary` from `fabrication_watchlist` before
+# matching, so listing e.g. "django" here does NOT cause it to be flagged
+# for users whose profile actually claims Django.
+
+# Filler / hype words. Severity is decided by the validator's mode parameter
+# (strict = error, normal = warning, lenient = ignored).
+banned_words:
+  - passionate
+  - dedicated
+  - committed to
+  - utilizing
+  - utilize
+  - harnessing
+  - spearheaded
+  - spearhead
+  - orchestrated
+  - championed
+  - pioneered
+  - robust
+  - scalable solutions
+  - cutting-edge
+  - state-of-the-art
+  - best-in-class
+  - proven track record
+  - track record of success
+  - demonstrated ability
+  - strong communicator
+  - team player
+  - fast learner
+  - self-starter
+  - go-getter
+  - synergy
+  - cross-functional collaboration
+  - holistic
+  - transformative
+  - innovative solutions
+  - paradigm
+  - ecosystem
+  - proactive
+  - detail-oriented
+  - highly motivated
+  - seamless
+  - full lifecycle
+  - deep understanding
+  - extensive experience
+  - comprehensive knowledge
+  - thrives in
+  - excels at
+  - adept at
+  - well-versed in
+  - i am confident
+  - i believe
+  - i am excited
+  - plays a critical role
+  - instrumental in
+  - integral part of
+  - strong track record
+  - eager to
+  - eager
+  # Cover-letter-specific additions
+  - this demonstrates
+  - this reflects
+  - i have experience with
+  - furthermore
+  - additionally
+  - moreover
+
+# Phrases that mean the LLM is talking to itself rather than producing
+# clean output. Always treated as a hard error.
+llm_leak_phrases:
+  - i am sorry
+  - i apologize
+  - i will try
+  - let me try
+  - i am at a loss
+  - i am truly sorry
+  - apologies for
+  - i keep fabricating
+  - i will have to admit
+  - one final attempt
+  - one last time
+  - if it fails again
+  - persistent errors
+  - i am having difficulty
+  - i made an error
+  - my mistake
+  - here is the corrected
+  - here is the revised
+  - here is the updated
+  - here is my
+  - below is the
+  - as requested
+  - "note:"
+  - "disclaimer:"
+  - "important:"
+  - i have rewritten
+  - i have removed
+  - i have fixed
+  - i have replaced
+  - i have updated
+  - i have corrected
+  - per your feedback
+  - based on your feedback
+  - as per the instructions
+  - the following resume
+  - the resume below
+  - the following cover letter
+  - the letter below
+
+# Languages / frameworks / certifications LLMs commonly hallucinate. Entries
+# the user actually has (per `skills_boundary`) are auto-subtracted before
+# matching, so this can stay broad without false-positiving real candidates.
+fabrication_watchlist:
+  # Languages with zero relation to a typical Python/JS candidate's stack
+  - c#
+  - c++
+  - golang
+  - rust
+  - ruby
+  - kotlin
+  - swift
+  - scala
+  - matlab
+  # Frameworks for wrong languages
+  - spring
+  - django
+  - rails
+  - angular
+  - vue
+  - svelte
+  # Hard lies: certifications can't be stretched
+  - certif
+  - certified
+  - pmp
+  - scrum master
+  - aws certified

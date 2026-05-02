@@ -5,6 +5,7 @@ and exports to PDF using headless Chromium via Playwright.
 """
 
 import logging
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -357,6 +358,16 @@ def render_pdf(html: str, output_path: str) -> None:
             print_background=True,
         )
         browser.close()
+
+
+def count_pdf_pages(pdf_path: Path) -> int:
+    """Count pages in a PDF without adding a parser dependency.
+
+    Counts ``/Type /Page`` markers in the raw PDF bytes (excludes ``/Pages``).
+    Accurate for the simple, single-document PDFs Playwright emits here.
+    """
+    data = Path(pdf_path).read_bytes()
+    return len(re.findall(rb"/Type\s*/Page[^s]", data))
 
 
 def _render_pdf_with_page(page, html: str, output_path: str) -> None:

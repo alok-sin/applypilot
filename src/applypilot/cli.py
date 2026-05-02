@@ -17,74 +17,16 @@ if TYPE_CHECKING:
     from applypilot.core import RunContext
 
 
-class _ColorFormatter(logging.Formatter):
-    """Colorize log levels for terminal output only."""
-
-    _RESET = "\033[0m"
-    _LEVEL_COLORS = {
-        logging.DEBUG: "\033[36m",      # cyan
-        logging.INFO: "\033[32m",       # green
-        logging.WARNING: "\033[33m",    # yellow
-        logging.ERROR: "\033[31m",      # red
-        logging.CRITICAL: "\033[1;31m", # bold red
-    }
-
-    def format(self, record: logging.LogRecord) -> str:
-        original = record.levelname
-        color = self._LEVEL_COLORS.get(record.levelno)
-        if color:
-            record.levelname = f"{color}{original}{self._RESET}"
-        try:
-            return super().format(record)
-        finally:
-            record.levelname = original
+from applypilot.logging_setup import configure_logging as _configure_logging
+from applypilot.logging_setup import parse_log_level
 
 
 def _parse_log_level(value: str) -> int:
-    level = getattr(logging, value.upper(), None)
-    if not isinstance(level, int):
-        raise typer.BadParameter("Choose one of: debug, info, warning, error, critical.")
-    return level
+    try:
+        return parse_log_level(value)
+    except ValueError as exc:
+        raise typer.BadParameter("Choose one of: debug, info, warning, error, critical.") from exc
 
-
-def _configure_logging(
-    level: str = "INFO",
-    log_file: Path | None = None,
-) -> None:
-    """Set consistent logging output for CLI runs."""
-    root_level = _parse_log_level(level)
-    noisy_level = logging.INFO if root_level <= logging.DEBUG else logging.WARNING
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(root_level)
-    console_handler.setFormatter(
-        _ColorFormatter("%(asctime)s - %(levelname)s - %(message)s", datefmt="%H:%M:%S")
-    )
-    logging.basicConfig(level=root_level, handlers=[console_handler], force=True)
-
-    if log_file is not None:
-        log_file.parent.mkdir(parents=True, exist_ok=True)
-        file_handler = logging.FileHandler(log_file, encoding="utf-8")
-        file_handler.setLevel(root_level)
-        file_handler.setFormatter(
-            logging.Formatter("%(asctime)s - %(levelname)s - %(message)s", datefmt="%H:%M:%S")
-        )
-        logging.getLogger().addHandler(file_handler)
-
-    # Keep SDK/network internals quiet by default. When the user opts into
-    # debug logging, expose HTTP/SDK request details too.
-    for name in (
-        "LiteLLM",
-        "LiteLLM Router",
-        "LiteLLM Proxy",
-        "litellm",
-        "httpx",
-        "httpcore",
-        "openai",
-    ):
-        noisy = logging.getLogger(name)
-        noisy.handlers.clear()
-        noisy.setLevel(noisy_level)
-        noisy.propagate = True
 
 _configure_logging()
 

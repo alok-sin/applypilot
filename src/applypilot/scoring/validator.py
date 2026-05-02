@@ -14,59 +14,22 @@ lenient -- banned words ignored; only fabrication and required structure checked
 import re
 import logging
 
+from applypilot.validator_config import load_validator_config
+
 log = logging.getLogger(__name__)
 
 
 # ── Universal Constants (not personal data) ───────────────────────────────
+# Word lists live in src/applypilot/config/validator.yaml so they can be
+# tuned without code changes; per-user override is supported via
+# `<data_dir>/validator.yaml` through validator_config.load_validator_config.
+_VALIDATOR_CFG = load_validator_config()
 
-BANNED_WORDS: list[str] = [
-    "passionate", "dedicated", "committed to",
-    "utilizing", "utilize", "harnessing",
-    "spearheaded", "spearhead", "orchestrated", "championed", "pioneered",
-    "robust", "scalable solutions", "cutting-edge", "state-of-the-art", "best-in-class",
-    "proven track record", "track record of success", "demonstrated ability",
-    "strong communicator", "team player", "fast learner", "self-starter", "go-getter",
-    "synergy", "cross-functional collaboration", "holistic",
-    "transformative", "innovative solutions", "paradigm", "ecosystem",
-    "proactive", "detail-oriented", "highly motivated",
-    "seamless", "full lifecycle",
-    "deep understanding", "extensive experience", "comprehensive knowledge",
-    "thrives in", "excels at", "adept at", "well-versed in",
-    "i am confident", "i believe", "i am excited",
-    "plays a critical role", "instrumental in", "integral part of",
-    "strong track record", "eager to", "eager",
-    # Cover-letter-specific additions
-    "this demonstrates", "this reflects", "i have experience with",
-    "furthermore", "additionally", "moreover",
-]
-
-LLM_LEAK_PHRASES: list[str] = [
-    "i am sorry", "i apologize", "i will try", "let me try",
-    "i am at a loss", "i am truly sorry", "apologies for",
-    "i keep fabricating", "i will have to admit", "one final attempt",
-    "one last time", "if it fails again", "persistent errors",
-    "i am having difficulty", "i made an error", "my mistake",
-    "here is the corrected", "here is the revised", "here is the updated",
-    "here is my", "below is the", "as requested",
-    "note:", "disclaimer:", "important:",
-    "i have rewritten", "i have removed", "i have fixed",
-    "i have replaced", "i have updated", "i have corrected",
-    "per your feedback", "based on your feedback", "as per the instructions",
-    "the following resume", "the resume below",
-    "the following cover letter", "the letter below",
-]
-
-# Known fabrication markers: completely unrelated tools/languages.
-# Reasonable stretches (K8s, Terraform, Redis, Kafka etc.) are ALLOWED.
-FABRICATION_WATCHLIST: set[str] = {
-    # Languages with zero relation to the candidate's stack
-    "c#", "c++", "golang", "rust", "ruby",
-    "kotlin", "swift", "scala", "matlab",
-    # Frameworks for wrong languages
-    "spring", "django", "rails", "angular", "vue", "svelte",
-    # Hard lies: certifications can't be stretched
-    "certif", "certified", "pmp", "scrum master", "aws certified",
-}
+BANNED_WORDS: list[str] = list(_VALIDATOR_CFG.get("banned_words", []))
+LLM_LEAK_PHRASES: list[str] = list(_VALIDATOR_CFG.get("llm_leak_phrases", []))
+# Watchlist is matched as substrings; the validator subtracts the user's
+# real `skills_boundary` at call time so legitimate skills aren't flagged.
+FABRICATION_WATCHLIST: set[str] = {s.lower() for s in _VALIDATOR_CFG.get("fabrication_watchlist", [])}
 
 REQUIRED_SECTIONS: set[str] = {"SUMMARY", "TECHNICAL SKILLS", "EXPERIENCE", "EDUCATION"}
 
@@ -125,11 +88,18 @@ def validate_json_fields(data: dict, profile: dict, mode: str = "normal") -> dic
     # Collect all text for bulk checks
     all_text_parts: list[str] = [data["summary"]]
 
-    # Skills: check for fabrication (always enforced)
+    # Skills: check for fabrication (always enforced).
+    # Subtract the user's real skills_boundary first -- the watchlist is a
+    # generic LLM-hallucination list, not a per-user truth, so legitimate
+    # entries like django/c++/golang must not be flagged for users who
+    # actually have them in their profile.
+    allowed_skills = _build_skills_set(profile)
     if isinstance(data["skills"], dict):
         skills_text = " ".join(str(v) for v in data["skills"].values()).lower()
         for fake in FABRICATION_WATCHLIST:
             if len(fake) <= 2:
+                continue
+            if fake in allowed_skills:
                 continue
             if fake in skills_text:
                 errors.append(f"Fabricated skill: '{fake}'")
@@ -243,13 +213,18 @@ def validate_tailored_resume(text: str, profile: dict, original_text: str = "") 
     if phone and phone not in text:
         warnings.append("Phone missing -- will be injected")
 
-    # 7. Scan TECHNICAL SKILLS section for fabricated tools
+    # 7. Scan TECHNICAL SKILLS section for fabricated tools.
+    # Same allowlist subtraction as the JSON validator: don't flag a
+    # watchlist entry that the user's profile actually claims.
+    allowed_skills = _build_skills_set(profile)
     skills_start = text_lower.find("technical skills")
     skills_end = text_lower.find("experience", skills_start) if skills_start != -1 else -1
     if skills_start != -1 and skills_end != -1:
         skills_block = text_lower[skills_start:skills_end]
         for fake in FABRICATION_WATCHLIST:
             if len(fake) <= 2:
+                continue
+            if fake in allowed_skills:
                 continue
             if fake in skills_block:
                 errors.append(f"FABRICATED SKILL in Technical Skills: '{fake}'")
@@ -259,6 +234,8 @@ def validate_tailored_resume(text: str, profile: dict, original_text: str = "") 
         original_lower = original_text.lower()
         for fake in FABRICATION_WATCHLIST:
             if len(fake) <= 2:
+                continue
+            if fake in allowed_skills:
                 continue
             if fake in text_lower and fake not in original_lower:
                 warnings.append(f"New tool/skill appeared: '{fake}' (not in original)")

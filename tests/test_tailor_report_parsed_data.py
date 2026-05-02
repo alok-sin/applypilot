@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from applypilot.prompts import load_prompts
 from applypilot.scoring import tailor
 
 
@@ -50,6 +51,7 @@ def test_tailor_resume_returns_parsed_json_but_omits_it_from_report(monkeypatch)
         max_retries=0,
         validation_mode="normal",
         client=FakeClient(),
+        prompts=load_prompts(),
     )
 
     assert parsed_json == parsed

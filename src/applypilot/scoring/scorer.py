@@ -15,6 +15,7 @@ from applypilot.core import build_default_run_context
 from applypilot.database import get_jobs_by_stage, mark_filtered
 from applypilot.discovery.filters import apply_rule_gate
 from applypilot.llm import LLMClient, get_client_for_ctx
+from applypilot.prompts import render_prompt
 
 if TYPE_CHECKING:
     from applypilot.core import RunContext
@@ -22,21 +23,6 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 _THOUGHT_RE = re.compile(r"<thought>.*?</thought>", re.DOTALL | re.IGNORECASE)
-
-
-# ── Scoring Prompt ────────────────────────────────────────────────────────
-
-SCORE_PROMPT = """You are a job fit evaluator. Score how well a candidate fits a role.
-
-SCORING SCALE:
-9-10 = Perfect match, 7-8 = Strong, 5-6 = Moderate, 3-4 = Weak, 1-2 = Poor.
-
-Weight technical skills heavily. Consider transferable experience. Be realistic about experience level vs. requirements.
-
-OUTPUT ONLY these 3 lines — nothing else, no preamble, no analysis:
-SCORE: [1-10]
-KEYWORDS: [comma-separated ATS keywords that match the candidate]
-REASONING: [2-3 sentences explaining the score]"""
 
 
 def _parse_score_response(response: str) -> dict:
@@ -118,12 +104,14 @@ def build_job_context(job: dict, max_desc_chars: int = 6000) -> str:
     return f"{header}\nDESCRIPTION:\n{(job.get('full_description') or '')[:max_desc_chars]}"
 
 
-def score_job(resume_text: str, job: dict, *, client: LLMClient) -> dict:
+def score_job(
+    resume_text: str, job: dict, *, client: LLMClient, system_prompt: str,
+) -> dict:
     """Score a single job against the resume.
 
-    The ``client`` is passed in rather than looked up here — ``run_scoring``
-    builds it once per run so all jobs in a batch share the same cached
-    system prompt + resume blocks.
+    Both ``client`` and ``system_prompt`` are passed in rather than looked
+    up here -- ``run_scoring`` builds them once per run so all jobs in a
+    batch share the same cached system prompt + resume blocks.
     """
     job_text = (
         f"TITLE: {job['title']}\n"
@@ -133,7 +121,7 @@ def score_job(resume_text: str, job: dict, *, client: LLMClient) -> dict:
     )
 
     messages = [
-        {"role": "system", "content": SCORE_PROMPT, "cache": "ephemeral"},
+        {"role": "system", "content": system_prompt, "cache": "ephemeral"},
         {"role": "user", "content": f"RESUME:\n{resume_text}", "cache": "ephemeral"},
         {"role": "user", "content": f"JOB POSTING:\n{job_text}"},
     ]
@@ -216,13 +204,14 @@ def run_scoring(
     now = datetime.now(timezone.utc).isoformat()
 
     client = get_client_for_ctx(ctx, "score")
+    system_prompt = render_prompt(ctx.user.prompts, "scoring.score.system")
     cancel = ctx.task.cancellation
 
     for job in jobs:
         if cancel.is_set():
             log.info("Scoring cancelled after %d/%d jobs", completed, len(jobs))
             break
-        result = score_job(resume_text, job, client=client)
+        result = score_job(resume_text, job, client=client, system_prompt=system_prompt)
         result["url"] = job["url"]
         completed += 1
 

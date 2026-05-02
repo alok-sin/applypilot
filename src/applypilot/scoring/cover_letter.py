@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 from applypilot.core import build_default_run_context
 from applypilot.discovery.filters import apply_geo_gate
 from applypilot.llm import LLMClient, get_client_for_ctx
+from applypilot.prompts import render_prompt
 from applypilot.scoring.validator import (
     BANNED_WORDS,
     LLM_LEAK_PHRASES,
@@ -50,10 +51,12 @@ def _load_tailored_resume_text(job: dict, profile: dict, fallback_resume: str) -
 
 # ── Prompt Builder (profile-driven) ──────────────────────────────────────
 
-def _build_cover_letter_prompt(profile: dict) -> str:
+def _build_cover_letter_prompt(profile: dict, prompts: dict) -> str:
     """Build the cover letter system prompt from the user's profile.
 
-    All personal data, skills, and sign-off name come from the profile.
+    Template comes from ``prompts['cover_letter']['generate']['system']``;
+    personal data, skills, banned-word list, and sign-off name are
+    interpolated from the user's profile.
     """
     personal = profile.get("personal", {})
     boundary = profile.get("skills_boundary", {})
@@ -73,7 +76,8 @@ def _build_cover_letter_prompt(profile: dict) -> str:
     real_metrics = resume_facts.get("real_metrics", [])
     preserved_projects = resume_facts.get("preserved_projects", [])
 
-    # Build achievement examples for the prompt
+    # Build achievement examples for the prompt -- leading newline so the hint
+    # sits on its own line when present and disappears entirely when empty.
     projects_hint = ""
     if preserved_projects:
         projects_hint = f"\nKnown projects to reference: {', '.join(preserved_projects)}"
@@ -87,41 +91,15 @@ def _build_cover_letter_prompt(profile: dict) -> str:
     all_banned = ", ".join(f'"{w}"' for w in BANNED_WORDS)
     leak_banned = ", ".join(f'"{p}"' for p in LLM_LEAK_PHRASES)
 
-    return f"""Write a cover letter for {sign_off_name}. The goal is to get an interview.
-
-STRUCTURE: 3 short paragraphs. Under 250 words. Every sentence must earn its place.
-
-If MATCHED KEYWORDS are provided, weave 2-3 of the most relevant ones naturally into the letter.
-
-PARAGRAPH 1 (2-3 sentences): Open with a specific thing YOU built that solves THEIR problem. Not "I'm excited about this role." Not "This role aligns with my experience." Start with the work.
-
-PARAGRAPH 2 (3-4 sentences): Pick 2 achievements from the resume that are MOST relevant to THIS job. Use numbers. Frame as solving their problem, not listing your accomplishments.{projects_hint}{metrics_hint}
-
-PARAGRAPH 3 (1-2 sentences): One specific thing about the company from the job description (a product, a technical challenge, a team structure). Then close. "Happy to walk through any of this in more detail." or "Let's discuss." Nothing else.
-
-BANNED WORDS AND PHRASES (automated validator rejects ANY of these — do not use even once):
-{all_banned}
-
-ALSO BANNED (meta-commentary the validator catches):
-{leak_banned}
-
-BANNED PUNCTUATION: No em dashes (—) or en dashes (–). Use commas or periods.
-
-VOICE:
-- Write like a real engineer emailing someone they respect. Not formal, not casual. Just direct.
-- NEVER narrate or explain what you're doing. BAD: "This demonstrates my commitment to X." GOOD: Just state the fact and move on.
-- NEVER hedge. BAD: "might address some of your challenges." GOOD: "solves the same problem your team is facing."
-- Every sentence should contain either a number, a tool name, or a specific outcome. If it doesn't, cut it.
-- Read it out loud. If it sounds like a robot wrote it, rewrite it.
-
-FABRICATION = INSTANT REJECTION:
-The candidate's real tools are ONLY: {skills_str}.
-Do NOT mention ANY tool not in this list. If the job asks for tools not listed, talk about the work you did, not the tools.
-
-Sign off: just "{sign_off_name}"
-
-Output ONLY the letter text. No subject lines. No "Here is the cover letter:" preamble. No notes after the sign-off.
-Start DIRECTLY with "Dear Hiring Manager," and end with the name."""
+    return render_prompt(
+        prompts, "cover_letter.generate.system",
+        sign_off_name=sign_off_name,
+        projects_hint=projects_hint,
+        metrics_hint=metrics_hint,
+        all_banned=all_banned,
+        leak_banned=leak_banned,
+        skills_str=skills_str,
+    )
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────
@@ -144,7 +122,7 @@ def _strip_preamble(text: str) -> str:
 def generate_cover_letter(
     resume_text: str, job: dict, profile: dict,
     max_retries: int = 3, validation_mode: str = "normal",
-    *, client: "LLMClient",
+    *, client: "LLMClient", prompts: dict,
 ) -> str:
     """Generate a cover letter with fresh context on each retry + auto-sanitize.
 
@@ -167,7 +145,7 @@ def generate_cover_letter(
 
     avoid_notes: list[str] = []
     letter = ""
-    cl_prompt_base = _build_cover_letter_prompt(profile)
+    cl_prompt_base = _build_cover_letter_prompt(profile, prompts)
 
     for attempt in range(max_retries + 1):
         # System prompt + resume stay byte-stable so they hit the prefix cache
@@ -273,6 +251,7 @@ def run_cover_letters(min_score: int = 7, limit: int = 20,
     saved = 0
 
     client = get_client_for_ctx(ctx, "cover")
+    prompts = ctx.user.prompts
     cancel = ctx.task.cancellation
 
     for job in jobs:
@@ -284,7 +263,7 @@ def run_cover_letters(min_score: int = 7, limit: int = 20,
             job_resume = _load_tailored_resume_text(job, profile, resume_text)
             letter = generate_cover_letter(
                 job_resume, job, profile, validation_mode=validation_mode,
-                client=client,
+                client=client, prompts=prompts,
             )
 
             # Build safe filename prefix. The URL-derived hash suffix keeps

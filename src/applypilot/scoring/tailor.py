@@ -21,6 +21,7 @@ from applypilot.core import build_default_run_context
 from applypilot.database import get_jobs_by_stage
 from applypilot.discovery.filters import apply_geo_gate
 from applypilot.llm import LLMClient, get_client_for_ctx
+from applypilot.prompts import render_prompt
 from applypilot.scoring.validator import (
     BANNED_WORDS,
     sanitize_text,
@@ -37,11 +38,12 @@ MAX_ATTEMPTS = 5  # max cross-run retries before giving up
 
 # ── Prompt Builders (profile-driven) ──────────────────────────────────────
 
-def _build_tailor_prompt(profile: dict) -> str:
+def _build_tailor_prompt(profile: dict, prompts: dict) -> str:
     """Build the resume tailoring system prompt from the user's profile.
 
-    All skills boundaries, preserved entities, and formatting rules are
-    derived from the profile -- nothing is hardcoded.
+    Template comes from ``prompts['tailoring']['resume']['system']``;
+    skills boundary, preserved entities, and banned-word list are
+    interpolated from the user's profile.
     """
     boundary = profile.get("skills_boundary", {})
     resume_facts = profile.get("resume_facts", {})
@@ -56,12 +58,10 @@ def _build_tailor_prompt(profile: dict) -> str:
 
     # Preserved entities
     companies = resume_facts.get("preserved_companies", [])
-    projects = resume_facts.get("preserved_projects", [])
     school = resume_facts.get("preserved_school", "")
     real_metrics = resume_facts.get("real_metrics", [])
 
     companies_str = ", ".join(companies) if companies else "N/A"
-    projects_str = ", ".join(projects) if projects else "N/A"
     metrics_str = ", ".join(real_metrics) if real_metrics else "N/A"
 
     # Include ALL banned words from the validator so the LLM knows exactly
@@ -71,66 +71,18 @@ def _build_tailor_prompt(profile: dict) -> str:
     education = profile.get("experience", {})
     education_level = education.get("education_level", "")
 
-    return f"""You are a senior technical recruiter rewriting a resume to get this person an interview.
-
-Take the base resume and job description. Return a tailored resume as a JSON object.
-
-## RECRUITER SCAN (6 seconds):
-1. Title -- matches what they're hiring?
-2. Summary -- 2 sentences proving you've done this work
-3. First 3 bullets of most recent role -- verbs and outcomes match?
-4. Skills -- must-haves visible immediately?
-
-## SKILLS BOUNDARY (real skills only):
-{skills_block}
-
-You MAY add 2-3 closely related tools (Kubernetes if Docker, Terraform if AWS, Redis if PostgreSQL). No unrelated languages/frameworks.
-
-## TAILORING RULES:
-
-If FIT SCORE and MATCHED KEYWORDS are provided, prioritize those keywords when reordering skills and tailoring bullet points.
-
-TITLE: Match the target role. Keep seniority (Senior/Lead/Staff). Drop company suffixes and team names.
-
-SUMMARY: Rewrite from scratch. Lead with the 1-2 skills that matter most for THIS role. Sound like someone who's done this job.
-
-SKILLS: Reorder each category so the job's must-haves appear first.
-
-Reframe EVERY bullet for this role. Same real work, different angle. Every bullet must be reworded. Never copy verbatim.
-
-PROJECTS: Reorder by relevance. Drop irrelevant projects entirely.
-
-BULLETS: Strong verb + what you built + quantified impact. Vary verbs (Built, Designed, Implemented, Reduced, Automated, Deployed, Operated, Optimized). Most relevant first. Max 4 per section.
-
-## VOICE:
-- Write like a real engineer. Short, direct.
-- GOOD: "Automated financial reporting with Python + API integrations, cut processing time from 10 hours to 2"
-- BAD: "Leveraged cutting-edge AI technologies to drive transformative operational efficiencies"
-- BANNED WORDS (using ANY of these = validation failure — do not use them even once):
-  {banned_str}
-- No em dashes. Use commas, periods, or hyphens.
-
-## HARD RULES:
-- Do NOT invent work, companies, degrees, or certifications
-- Do NOT change real numbers ({metrics_str})
-- Preserved companies: {companies_str} -- names stay as-is
-- Preserved school: {school}
-- Must fit 1 page.
-
-## OUTPUT: Return ONLY valid JSON. No markdown fences. No commentary. No "here is" preamble.
-
-For each EXPERIENCE entry:
-- "title" must be the role title only
-- "company_dates" must contain the company name and dates
-
-For each PROJECTS entry:
-- "title" must be the project name or project title
-- "tech_dates" must contain tech stack, dates, or other short metadata
-
-{{"title":"Role Title","summary":"2-3 tailored sentences.","skills":{{"Languages":"...","Frameworks":"...","DevOps & Infra":"...","Databases":"...","Tools":"..."}},"experience":[{{"title":"Role Title","company_dates":"Company Name | Dates","bullets":["bullet 1","bullet 2","bullet 3","bullet 4"]}}],"projects":[{{"title":"Project Name - Description","tech_dates":"Tech | Dates","bullets":["bullet 1","bullet 2"]}}],"education":"{school} | {education_level}"}}"""
+    return render_prompt(
+        prompts, "tailoring.resume.system",
+        skills_block=skills_block,
+        banned_str=banned_str,
+        metrics_str=metrics_str,
+        companies_str=companies_str,
+        school=school,
+        education_level=education_level,
+    )
 
 
-def _build_judge_prompt(profile: dict) -> str:
+def _build_judge_prompt(profile: dict, prompts: dict) -> str:
     """Build the LLM judge prompt from the user's profile."""
     boundary = profile.get("skills_boundary", {})
     resume_facts = profile.get("resume_facts", {})
@@ -145,45 +97,11 @@ def _build_judge_prompt(profile: dict) -> str:
     real_metrics = resume_facts.get("real_metrics", [])
     metrics_str = ", ".join(real_metrics) if real_metrics else "N/A"
 
-    return f"""You are a resume quality judge. A tailoring engine rewrote a resume to target a specific job. Your job is to catch LIES, not style changes.
-
-You must answer with EXACTLY this format:
-VERDICT: PASS or FAIL
-ISSUES: (list any problems, or "none")
-
-## CONTEXT -- what the tailoring engine was instructed to do (all of this is ALLOWED):
-- Change the title to match the target role
-- Rewrite the summary from scratch for the target job
-- Reorder bullets and projects to put the most relevant first
-- Reframe bullets to use the job's language
-- Drop low-relevance bullets and replace with more relevant ones from other sections
-- Reorder the skills section to put job-relevant skills first
-- Change tone and wording extensively
-
-## WHAT IS FABRICATION (FAIL for these):
-1. Adding tools, languages, or frameworks to TECHNICAL SKILLS that aren't in the original. The allowed skills are ONLY: {skills_str}
-2. Inventing NEW metrics or numbers not in the original. The real metrics are: {metrics_str}
-3. Inventing work that has no basis in any original bullet (completely new achievements).
-4. Adding companies, roles, or degrees that don't exist.
-5. Changing real numbers (inflating 80% to 95%, 500 nodes to 1000 nodes).
-
-## WHAT IS NOT FABRICATION (do NOT fail for these):
-- Rewording any bullet, even heavily, as long as the underlying work is real
-- Combining two original bullets into one
-- Splitting one original bullet into two
-- Describing the same work with different emphasis
-- Dropping bullets entirely
-- Reordering anything
-- Changing the title or summary completely
-
-## TOLERANCE RULE:
-The goal is to get interviews, not to be a perfect fact-checker. Allow up to 3 minor stretches per resume:
-- Adding a closely related tool the candidate could realistically know is a MINOR STRETCH, not fabrication.
-- Reframing a metric with slightly different wording is a MINOR STRETCH.
-- Adding any LEARNABLE skill given their existing stack is a MINOR STRETCH.
-- Only FAIL if there are MAJOR lies: completely invented projects, fake companies, fake degrees, wildly inflated numbers, or skills from a completely different domain.
-
-Be strict about major lies. Be lenient about minor stretches and learnable skills. Do not fail for style, tone, or restructuring."""
+    return render_prompt(
+        prompts, "tailoring.judge.system",
+        skills_str=skills_str,
+        metrics_str=metrics_str,
+    )
 
 
 # ── JSON Extraction ───────────────────────────────────────────────────────
@@ -312,14 +230,119 @@ def assemble_resume_text(data: dict, profile: dict) -> str:
     return "\n".join(lines)
 
 
+# ── One-Page Fit (post-render trim) ──────────────────────────────────────
+
+# Trim ceiling: at most this many trim steps before giving up. Each step
+# removes one project or trims/drops one experience entry. 8 covers the worst
+# resume we've seen (2 projects + 4 experience trims + slack).
+_MAX_PAGE_TRIMS = 8
+
+
+def _trim_resume_one_step(data: dict) -> str | None:
+    """Apply one content-trim step to a resume JSON in place.
+
+    Order is intentional: projects (often academic/student) go before any
+    work history, then older experience entries are trimmed and finally
+    dropped, then mid-tier entries shrink. Returns a short description of
+    the step taken, or ``None`` when nothing more can be trimmed.
+    """
+    projects = data.get("projects") or []
+    experience = data.get("experience") or []
+
+    # 1. Drop projects from the bottom up — least relevant first, since the
+    # tailoring prompt already orders projects by relevance.
+    if projects:
+        dropped = projects.pop()
+        return f"dropped project: {dropped.get('title', '?')}"
+
+    # 2. Trim trailing experience entries (positions 3+) down to 2 bullets.
+    for entry in experience[2:]:
+        bullets = entry.get("bullets") or []
+        if len(bullets) > 2:
+            entry["bullets"] = bullets[:2]
+            return f"trimmed bullets in: {entry.get('title', '?')}"
+
+    # 3. Drop the oldest experience entry entirely (only if 4+ remain).
+    if len(experience) > 3:
+        dropped = experience.pop()
+        return f"dropped oldest experience: {dropped.get('title', '?')}"
+
+    # 4. Shrink the second entry's bullets to 3.
+    if len(experience) >= 2:
+        bullets = experience[1].get("bullets") or []
+        if len(bullets) > 3:
+            experience[1]["bullets"] = bullets[:3]
+            return f"trimmed bullets in: {experience[1].get('title', '?')}"
+
+    # 5. Last resort: shrink the most recent role's bullets to 3.
+    if experience:
+        bullets = experience[0].get("bullets") or []
+        if len(bullets) > 3:
+            experience[0]["bullets"] = bullets[:3]
+            return f"trimmed bullets in: {experience[0].get('title', '?')}"
+
+    return None
+
+
+def render_resume_pdf_fit_one_page(
+    data: dict, profile: dict, output_path,
+) -> tuple[str, list[str]]:
+    """Render a tailored resume to a one-page PDF, trimming if necessary.
+
+    Mutates ``data`` so the caller can persist the trimmed JSON alongside
+    the PDF. Renders once with the original content; if that overflows,
+    holds a single Playwright session open and re-renders after each trim
+    step until the PDF fits one page or no more trims are possible.
+
+    Returns ``(pdf_path, trims_applied)``.
+    """
+    from pathlib import Path
+
+    from applypilot.scoring.pdf import (
+        _render_pdf_with_page,
+        build_html,
+        convert_text_to_pdf,
+        count_pdf_pages,
+        parse_resume,
+    )
+
+    output_path = Path(output_path)
+    text = assemble_resume_text(data, profile)
+    convert_text_to_pdf(text, output_path)
+
+    if count_pdf_pages(output_path) <= 1:
+        return str(output_path), []
+
+    trims: list[str] = []
+    from playwright.sync_api import sync_playwright
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        try:
+            page = browser.new_page()
+            for _ in range(_MAX_PAGE_TRIMS):
+                step = _trim_resume_one_step(data)
+                if step is None:
+                    break
+                trims.append(step)
+                text = assemble_resume_text(data, profile)
+                html = build_html(parse_resume(text))
+                _render_pdf_with_page(page, html, str(output_path))
+                if count_pdf_pages(output_path) <= 1:
+                    break
+        finally:
+            browser.close()
+
+    return str(output_path), trims
+
+
 # ── LLM Judge ────────────────────────────────────────────────────────────
 
 def judge_tailored_resume(
     original_text: str, tailored_text: str, job_title: str, profile: dict,
-    *, client: "LLMClient",
+    *, client: "LLMClient", prompts: dict,
 ) -> dict:
     """LLM judge layer: catches subtle fabrication that programmatic checks miss."""
-    judge_prompt = _build_judge_prompt(profile)
+    judge_prompt = _build_judge_prompt(profile, prompts)
 
     messages = [
         {"role": "system", "content": judge_prompt, "cache": "ephemeral"},
@@ -352,7 +375,7 @@ def judge_tailored_resume(
 def tailor_resume(
     resume_text: str, job: dict, profile: dict,
     max_retries: int = 3, validation_mode: str = "normal",
-    *, client: "LLMClient",
+    *, client: "LLMClient", prompts: dict,
 ) -> tuple[str, dict, dict | None]:
     """Generate a tailored resume via JSON output + fresh context on each retry.
 
@@ -387,7 +410,7 @@ def tailor_resume(
     avoid_notes: list[str] = []
     tailored = ""
     last_data: dict | None = None
-    tailor_prompt_base = _build_tailor_prompt(profile)
+    tailor_prompt_base = _build_tailor_prompt(profile, prompts)
 
     for attempt in range(max_retries + 1):
         report["attempts"] = attempt + 1
@@ -444,7 +467,8 @@ def tailor_resume(
             return tailored, report, last_data
 
         judge = judge_tailored_resume(
-            resume_text, tailored, job.get("title", ""), profile, client=client,
+            resume_text, tailored, job.get("title", ""), profile,
+            client=client, prompts=prompts,
         )
         report["judge"] = judge
 
@@ -505,6 +529,7 @@ def run_tailoring(min_score: int = 7, limit: int = 20,
     stats: dict[str, int] = {"approved": 0, "failed_validation": 0, "failed_judge": 0, "error": 0}
 
     client = get_client_for_ctx(ctx, "tailor")
+    prompts = ctx.user.prompts
     cancel = ctx.task.cancellation
 
     for job in jobs:
@@ -522,7 +547,8 @@ def run_tailoring(min_score: int = 7, limit: int = 20,
         )
         try:
             tailored, report, parsed_json = tailor_resume(
-                resume_text, job, profile, validation_mode=validation_mode, client=client,
+                resume_text, job, profile, validation_mode=validation_mode,
+                client=client, prompts=prompts,
             )
 
             # Build safe filename prefix. The URL-derived hash suffix keeps
@@ -534,10 +560,7 @@ def run_tailoring(min_score: int = 7, limit: int = 20,
             url_hash = hashlib.blake2b(job["url"].encode("utf-8"), digest_size=4).hexdigest()
             prefix = f"{safe_site}_{safe_title}_{url_hash}"
 
-            # Save structured resume JSON as the canonical intermediate artifact.
             json_path = tailored_dir / f"{prefix}.json"
-            if parsed_json is not None:
-                json_path.write_text(json.dumps(parsed_json, indent=2), encoding="utf-8")
 
             # Save job description for traceability
             job_path = tailored_dir / f"{prefix}_JOB.txt"
@@ -551,17 +574,35 @@ def run_tailoring(min_score: int = 7, limit: int = 20,
             )
             job_path.write_text(job_desc, encoding="utf-8")
 
-            # Generate PDF for approved resumes (best-effort). The PDF is the
-            # final resume artifact; JSON is retained as the intermediate source.
+            # Generate PDF for approved resumes, fitting to one page if the
+            # initial render overflows. Trims (if any) mutate ``parsed_json``
+            # in place so the saved JSON matches the final PDF.
             pdf_path = None
             if report["status"] in ("approved", "approved_with_judge_warning"):
                 try:
-                    from applypilot.scoring.pdf import convert_text_to_pdf
-
-                    pdf_path = str(convert_text_to_pdf(tailored, tailored_dir / f"{prefix}.pdf"))
+                    if parsed_json is not None:
+                        pdf_path, page_trims = render_resume_pdf_fit_one_page(
+                            parsed_json, profile, tailored_dir / f"{prefix}.pdf",
+                        )
+                        report["page_trims"] = page_trims
+                        if page_trims:
+                            log.info(
+                                "%d/%d [TRIM] applied %d trim(s) to fit 1 page",
+                                completed, len(jobs), len(page_trims),
+                            )
+                    else:
+                        from applypilot.scoring.pdf import convert_text_to_pdf
+                        pdf_path = str(convert_text_to_pdf(
+                            tailored, tailored_dir / f"{prefix}.pdf",
+                        ))
                 except Exception:
                     log.debug("PDF generation failed for %s", json_path, exc_info=True)
                     report["status"] = "error"
+
+            # Save structured resume JSON after PDF rendering so any one-page
+            # trims are reflected in the saved JSON artifact.
+            if parsed_json is not None:
+                json_path.write_text(json.dumps(parsed_json, indent=2), encoding="utf-8")
 
             # Save validation/reporting metadata after final status is known.
             report_path = tailored_dir / f"{prefix}_REPORT.json"

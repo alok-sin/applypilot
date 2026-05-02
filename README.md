@@ -157,12 +157,20 @@ API keys and runtime config: `GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_
 
 For auto-apply, you can also set `CHROME_PROFILE_DIRECTORY` (for example `Profile 1`) if your logged-in Chrome session is not stored under `Default`.
 
+### `prompts.yaml` (optional override)
+Every LLM prompt the pipeline uses (scoring, tailoring, judge, cover letter, prefilter sweep) lives in `config/prompts.yaml` shipped with the package. Drop a `prompts.yaml` next to your `profile.json` to override any subset of keys — only the keys you set are replaced, the rest fall through to the package defaults. Templates use `${var}` substitution.
+
+### `validator.yaml` (optional override)
+The banned-word list, LLM-leak phrases, and fabrication watchlist used by the resume/cover-letter validators ship at `config/validator.yaml`. A user `validator.yaml` in your data dir overrides any of those lists. The fabrication watchlist is automatically reduced by your `profile.json#skills_boundary` at validation time, so legitimate skills (e.g. `django`, `c++`, `golang`) listed in your profile are never flagged as hallucinations.
+
 ### Package configs (shipped with the package)
 - `config/employers.yaml` — Workday employer registry (with `tags`)
 - `config/greenhouse.yaml` — Greenhouse ATS employer registry (with `tags`)
 - `config/smartrecruiters.yaml` — SmartRecruiters ATS employer registry (with `tags`)
 - `config/sites.yaml` — Direct career sites, blocked sites, base URLs, manual ATS domains
 - `config/searches.example.yaml` — Example search configuration
+- `config/prompts.yaml` — Default LLM prompts (override per-user via `<data_dir>/prompts.yaml`)
+- `config/validator.yaml` — Default validator word lists (override per-user via `<data_dir>/validator.yaml`)
 
 ---
 
@@ -200,7 +208,7 @@ applypilot run enrich --show-browser
 AI scores every job 1-10 against your profile. 9-10 = strong match, 7-8 = good, 5-6 = moderate, 1-4 = skip. Only jobs above your threshold proceed to tailoring. Use `--rescore-above N` to re-score jobs whose existing `fit_score >= N` (handy after switching score model).
 
 ### Tailor
-Generates a custom resume per job: reorders experience, emphasizes relevant skills, incorporates keywords from the job description. Your `resume_facts` (companies, projects, metrics) are preserved exactly. The AI reorganizes but never fabricates.
+Generates a custom resume per job: reorders experience, emphasizes relevant skills, incorporates keywords from the job description. Your `resume_facts` (companies, projects, metrics) are preserved exactly. The AI reorganizes but never fabricates. Tailored resumes render to PDF and auto-fit to one page — if the first render overflows, the renderer drops the lowest-priority projects and trims older experience bullets, holding a single Playwright session open across attempts. The saved JSON artifact reflects whatever trims were applied so it stays in sync with the PDF.
 
 ### Cover Letter
 Writes a targeted cover letter per job referencing the specific company, role, and how your experience maps to their requirements.

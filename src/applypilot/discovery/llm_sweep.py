@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 
 from applypilot.core import build_default_run_context
 from applypilot.llm import get_client_for_ctx
+from applypilot.prompts import render_prompt
 
 if TYPE_CHECKING:
     from applypilot.core import RunContext
@@ -28,25 +29,6 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 _VALID_REASONS = {"seniority_mismatch", "country_mismatch", "expired"}
-
-SWEEP_SYSTEM = """You are filtering job postings for a candidate.
-
-Reject ONLY if clearly true from the text below:
-- seniority_mismatch: role is clearly junior/entry-level/intern vs the candidate's seniority
-- country_mismatch:   the job's location/timezone is incompatible with the candidate's
-                      ACCEPTS/REJECTS list. A remote job posted from or restricted to
-                      a rejected country IS a country_mismatch even if it says "remote".
-- expired:            text explicitly says closed, filled, on hold, or posting is old
-
-If unsure, PASS. Do not reject for minor concerns.
-
-Output exactly two lines, nothing else:
-VERDICT: PASS
-REASON: ok
-
-or:
-VERDICT: REJECT
-REASON: <seniority_mismatch|country_mismatch|expired>"""
 
 
 _LINE_RE = re.compile(r"^\s*(VERDICT|REASON)\s*:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE)
@@ -155,6 +137,7 @@ def run_llm_sweep(limit: int = 0, ctx: "RunContext | None" = None) -> dict:
         return {"checked": 0, "rejected": 0, "errors": 0, "elapsed": 0.0}
 
     client = get_client_for_ctx(ctx, "prefilter")
+    sweep_system = render_prompt(ctx.user.prompts, "prefilter.sweep.system")
     log.info("LLM sweep: classifying %d candidate(s) via task=prefilter", len(rows))
 
     t0 = time.time()
@@ -163,7 +146,7 @@ def run_llm_sweep(limit: int = 0, ctx: "RunContext | None" = None) -> dict:
     for row in rows:
         job = dict(row) if not isinstance(row, dict) else row
         messages = [
-            {"role": "system", "content": SWEEP_SYSTEM, "cache": "ephemeral"},
+            {"role": "system", "content": sweep_system, "cache": "ephemeral"},
             {"role": "user", "content": _build_user_msg(job, profile, search_cfg)},
         ]
         try:
