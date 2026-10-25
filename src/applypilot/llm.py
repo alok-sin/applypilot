@@ -3,7 +3,11 @@
 Runtime contract:
   - If set, LLM_MODEL must be a fully-qualified LiteLLM model string
     (for example: openai/gpt-4o-mini, anthropic/claude-3-5-haiku-latest,
-    gemini/gemini-3.0-flash).
+    gemini/gemini-3.0-flash). The bare string ``agy`` is also accepted
+    and dispatches to the local Antigravity CLI (no provider prefix needed).
+  - ``lightning/<model>`` routes to Lightning AI's OpenAI-compatible endpoint:
+    any model under the single LIGHTNING_API_KEY (for example
+    lightning/deepseek-ai/DeepSeek-V3.1).
   - If LLM_MODEL is unset, provider is inferred by first configured source:
     GEMINI_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, then LLM_URL.
   - Credentials come from provider env vars or generic LLM_API_KEY.
@@ -45,9 +49,12 @@ _DEFAULT_MODEL_BY_PROVIDER = {
     "gemini": "gemini/gemini-3.0-flash",
     "openai": "openai/gpt-5-mini",
     "anthropic": "anthropic/claude-haiku-4-5",
-    "lightning": "openai/lightning-ai/gemma-4-31B-it",
-    "gemini-cli": "gemini-cli/gemini-3.1-pro-preview",
+    "lightning": "lightning/lightning-ai/gemma-4-31B-it",
+    "agy": "agy",
 }
+
+_AGY_MODEL = "agy"
+_LIGHTNING_PREFIX = "lightning/"
 _DEFAULT_LOCAL_MODEL = "openai/local-model"
 _DEFAULT_FALLBACK_MODEL = "gemini/gemini-2.5-flash-preview-04-17"
 
@@ -77,7 +84,7 @@ class ChatMessage(TypedDict, total=False):
     # Optional cache hint. On Anthropic this becomes a cache_control breakpoint
     # on the resulting content block. On other providers the key is stripped
     # and identical prefixes are cached implicitly (Gemini/OpenAI) or not at
-    # all (local/Lightning/gemini-cli).
+    # all (local/Lightning/agy).
     cache: Literal["ephemeral"]
 
 
@@ -124,10 +131,26 @@ def _env_get(env: Mapping[str, str], key: str) -> str:
 
 
 def _provider_from_model(model: str) -> str:
+    # Bare "agy" is a special-case shorthand for the local Antigravity CLI:
+    # the CLI does not accept a -m flag, so there's no model name to qualify.
+    if model == _AGY_MODEL:
+        return "agy"
     provider, _, model_name = model.partition("/")
     if not provider or not model_name:
         raise RuntimeError("LLM_MODEL must include a provider prefix (for example 'openai/gpt-4o-mini').")
     return provider
+
+
+def _litellm_model(model: str) -> str:
+    """Map a ``lightning/<model>`` spec to litellm's ``openai/<model>``.
+
+    Lightning AI is OpenAI-compatible but litellm has no native "lightning"
+    provider; LLMConfig keeps provider "lightning" so its api_base and
+    LIGHTNING_API_KEY are used. Other models pass through unchanged.
+    """
+    if model.startswith(_LIGHTNING_PREFIX):
+        return "openai/" + model[len(_LIGHTNING_PREFIX):]
+    return model
 
 
 def _infer_provider_and_source(env: Mapping[str, str]) -> tuple[str, str] | None:
@@ -173,8 +196,8 @@ def resolve_llm_config(env: Mapping[str, str] | None = None) -> LLMConfig:
     api_key_env = provider_api_key_env.get(provider, "LLM_API_KEY")
     api_key = _env_get(env_map, api_key_env) or _env_get(env_map, "LLM_API_KEY")
 
-    # gemini-cli uses the CLI's own auth — no API key needed.
-    if not api_key and not local_url and provider != "gemini-cli":
+    # agy uses the CLI's own auth — no API key needed.
+    if not api_key and not local_url and provider != "agy":
         key_help = f"{api_key_env} or LLM_API_KEY" if provider in provider_api_key_env else "LLM_API_KEY"
         raise RuntimeError(
             f"Missing credentials for LLM_MODEL '{model}'. Set {key_help}, or set LLM_URL for "
@@ -206,19 +229,17 @@ def resolve_llm_config(env: Mapping[str, str] | None = None) -> LLMConfig:
     )
 
 
-def _call_gemini_cli(model: str, messages: list[ChatMessage], timeout: int) -> str:
-    """Invoke the `gemini` CLI as a completion backend.
+def _call_agy(messages: list[ChatMessage], timeout: int) -> str:
+    """Invoke the `agy` (Antigravity) CLI as a completion backend.
 
-    Messages are flattened into a single prompt. The CLI prints the model
-    response to stdout. Raises RuntimeError on non-zero exit or empty output.
+    Messages are flattened into a single prompt and passed via `-p`. The CLI
+    uses its own configured model — there is no per-call model selection.
     """
     import shutil
     import subprocess
 
-    if shutil.which("gemini") is None:
-        raise RuntimeError(
-            "gemini CLI not found on PATH. Install from https://github.com/google-gemini/gemini-cli"
-        )
+    if shutil.which("agy") is None:
+        raise RuntimeError("agy CLI not found on PATH. Install Antigravity and run `agy install`.")
 
     parts: list[str] = []
     for m in messages:
@@ -230,11 +251,7 @@ def _call_gemini_cli(model: str, messages: list[ChatMessage], timeout: int) -> s
             parts.append(f"[{role}]\n{content}")
     prompt = "\n\n".join(parts)
 
-    # model is "gemini-cli/gemini-3.1-pro-preview" — strip prefix for -m flag.
-    _, _, model_name = model.partition("/")
-
-    # Always pass -m explicitly so the CLI doesn't fall back to its config default.
-    cmd = ["gemini", "-m", model_name, "-p", prompt]
+    cmd = ["agy", "-p", prompt]
     try:
         result = subprocess.run(
             cmd,
@@ -244,15 +261,15 @@ def _call_gemini_cli(model: str, messages: list[ChatMessage], timeout: int) -> s
             check=False,
         )
     except subprocess.TimeoutExpired as exc:
-        raise RuntimeError(f"gemini CLI timed out after {timeout}s") from exc
+        raise RuntimeError(f"agy CLI timed out after {timeout}s") from exc
 
     if result.returncode != 0:
         stderr = (result.stderr or "").strip()[:500]
-        raise RuntimeError(f"gemini CLI exit {result.returncode}: {stderr}")
+        raise RuntimeError(f"agy CLI exit {result.returncode}: {stderr}")
 
     text = (result.stdout or "").strip()
     if not text:
-        raise RuntimeError("gemini CLI returned empty output")
+        raise RuntimeError("agy CLI returned empty output")
     return text
 
 
@@ -297,14 +314,14 @@ class LLMClient:
     ) -> str:
         """Run a single litellm.completion() call and return text."""
         # CLI backend: shell out instead of calling litellm.
-        if model.startswith("gemini-cli/"):
-            return _call_gemini_cli(model, messages, timeout)
+        if model == _AGY_MODEL:
+            return _call_agy(messages, timeout)
 
         provider = _provider_from_model(model)
         prepared = _apply_cache_markers(provider, list(messages))
 
         kwargs: dict[str, Any] = {
-            "model": model,
+            "model": _litellm_model(model),
             "messages": prepared,
             "max_tokens": max_output_tokens,
             "timeout": timeout,
@@ -427,7 +444,7 @@ class LLMClient:
         try:
             prepared = _apply_cache_markers(self.provider, list(messages))
             kwargs: dict[str, Any] = {
-                "model": self.model,
+                "model": _litellm_model(self.model),
                 "messages": prepared,
                 "max_tokens": max_output_tokens,
                 "num_retries": num_retries,

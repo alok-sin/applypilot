@@ -153,7 +153,7 @@ def run(
     rescore_above: Optional[int] = typer.Option(
         None,
         "--rescore-above",
-        help="Re-score jobs whose current fit_score is >= this value (useful with a gemini-cli/ model for free re-scoring).",
+        help="Re-score jobs whose current fit_score is >= this value (useful with the `agy` model for free re-scoring).",
     ),
     workers: int = typer.Option(1, "--workers", "-w", help="Parallel threads for discovery/enrichment stages."),
     stream: bool = typer.Option(False, "--stream", help="Run stages concurrently (streaming mode)."),

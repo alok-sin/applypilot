@@ -336,14 +336,16 @@ tasks:
 #   gemini/    - Google Gemini (GEMINI_API_KEY)
 #   openai/    - OpenAI (OPENAI_API_KEY)
 #   anthropic/ - Anthropic Claude (ANTHROPIC_API_KEY)
-#   lightning/ - Lightning AI (LIGHTNING_API_KEY, auto api_base)
-#   deepseek/  - DeepSeek (DEEPSEEK_API_KEY or LLM_API_KEY)
-#   gemini-cli/ - Local `gemini` CLI backend (no API key needed, free inference)
+#   lightning/ - Lightning AI, any hosted model (LIGHTNING_API_KEY, auto api_base).
+#                One key covers all of Lightning, e.g. lightning/deepseek-ai/DeepSeek-V3.1
+#   deepseek/  - DeepSeek's own API (DEEPSEEK_API_KEY or LLM_API_KEY)
+#   agy        - Local Antigravity CLI backend (no API key needed, free inference).
+#                Use the bare string `agy` — the CLI picks its own model.
 #
-# Example: use gemini CLI to score for free (no GEMINI_API_KEY quota consumed):
+# Example: use agy to score for free (no GEMINI_API_KEY quota consumed):
 #   tasks:
 #     score:
-#       model: gemini-cli/gemini-3.1-pro-preview
+#       model: agy
 #
 # For custom OpenAI-compatible endpoints, add api_base:
 #   tasks:
