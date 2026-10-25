@@ -28,6 +28,8 @@ scoring:
 
       Weight technical skills heavily. Consider transferable experience. Be realistic about experience level vs. requirements.
 
+      English only. Do not output any Chinese or other non-Latin (CJK) characters.
+
       OUTPUT ONLY these 3 lines — nothing else, no preamble, no analysis:
       SCORE: [1-10]
       KEYWORDS: [comma-separated ATS keywords that match the candidate]
@@ -195,6 +197,8 @@ prefilter:
       - expired:            text explicitly says closed, filled, on hold, or posting is old
 
       If unsure, PASS. Do not reject for minor concerns.
+
+      English only. Do not output any Chinese or other non-Latin (CJK) characters.
 
       Output exactly two lines, nothing else:
       VERDICT: PASS

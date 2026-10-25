@@ -402,6 +402,7 @@ Rules:
 - For description: extract the FULL text. Include all sections (About, Responsibilities, Requirements, etc.)
 - For apply URL: find the href of the link/button that starts the application process
 - If you cannot find one, set it to null
+- Output English only. If the page contains non-English text, summarize it in English; never emit Chinese/CJK characters.
 
 Return ONLY valid JSON:
 {{"full_description": "the complete job description text here", "application_url": "https://..." or null}}
