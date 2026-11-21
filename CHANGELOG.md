@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
  **New CLI commands** - `applypilot greenhouse verify|discover|validate|list-employers|add-job` for managing Greenhouse employers
  **Pipeline integration** - Greenhouse fetcher runs automatically during `discover` stage alongside JobSpy, Workday, and SmartExtract
 
+### Changed
+ **LiteLLM upgraded 1.63.14 → 1.110.2** - dependency pin `litellm~=1.63.0` → `litellm~=1.110.2` for current model coverage. No code changes required; provider routing, fallback, and cache-marker behavior verified unchanged.
+
 ## [0.2.0] - 2026-02-17
 
 ### Added
