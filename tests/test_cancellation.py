@@ -5,6 +5,7 @@ from __future__ import annotations
 import signal
 from types import SimpleNamespace
 
+import litellm
 import pytest
 
 import applypilot.cancellation as cancellation
@@ -68,6 +69,36 @@ def test_second_sigint_calls_os_exit_130(monkeypatch):
         handler(signal.SIGINT, None)
 
     assert exit_codes == [130]
+
+
+# --- Rate-limit classification ----------------------------------------------
+
+
+def _rate_limit_error() -> litellm.RateLimitError:
+    return litellm.RateLimitError("429 quota exceeded", llm_provider="openai", model="gpt-4o-mini")
+
+
+def test_is_rate_limit_error_recognizes_real_litellm_rate_limit_error() -> None:
+    assert llm_module._is_rate_limit_error(_rate_limit_error()) is True
+
+
+def test_is_rate_limit_error_recognizes_status_code_429_attribute() -> None:
+    exc = RuntimeError("too many requests")
+    exc.status_code = 429  # type: ignore[attr-defined]
+    assert llm_module._is_rate_limit_error(exc) is True
+
+
+def test_is_rate_limit_error_follows_nested_cause_chain() -> None:
+    inner = RuntimeError("upstream rejected")
+    inner.status_code = 429  # type: ignore[attr-defined]
+    outer = RuntimeError("wrapped failure")
+    outer.__cause__ = inner
+    assert llm_module._is_rate_limit_error(outer) is True
+
+
+def test_is_rate_limit_error_ignores_generic_runtime_error_mentioning_rate_limit() -> None:
+    """A message that merely says "rate limit 429" must not be classified as one."""
+    assert llm_module._is_rate_limit_error(RuntimeError("rate limit 429")) is False
 
 
 # --- LLM client integration -------------------------------------------------
@@ -145,11 +176,28 @@ def test_chat_still_falls_back_on_normal_error(monkeypatch):
     def _fake_completion(**kwargs):
         calls.append(kwargs["model"])
         if kwargs["model"] == "openai/gpt-4o-mini":
-            raise RuntimeError("rate limit 429")
+            raise RuntimeError("boom")
         return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))])
 
     monkeypatch.setattr(llm_module.litellm, "completion", _fake_completion)
 
     result = _client().chat([{"role": "user", "content": "hi"}])
     assert result == "ok"
+    assert calls == ["openai/gpt-4o-mini", "gemini/gemini-2.5-flash"]
+
+
+def test_chat_falls_back_on_real_litellm_rate_limit_error(monkeypatch):
+    """A genuine litellm.RateLimitError from the primary must trigger fallback."""
+    calls: list[str] = []
+
+    def _fake_completion(**kwargs):
+        calls.append(kwargs["model"])
+        if kwargs["model"] == "openai/gpt-4o-mini":
+            raise _rate_limit_error()
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="fallback ok"))])
+
+    monkeypatch.setattr(llm_module.litellm, "completion", _fake_completion)
+
+    result = _client().chat([{"role": "user", "content": "hi"}])
+    assert result == "fallback ok"
     assert calls == ["openai/gpt-4o-mini", "gemini/gemini-2.5-flash"]

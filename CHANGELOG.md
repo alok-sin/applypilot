@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
  **Pipeline integration** - Greenhouse fetcher runs automatically during `discover` stage alongside JobSpy, Workday, and SmartExtract
 
 ### Changed
- **LiteLLM upgraded 1.63.14 → 1.110.2** - dependency pin `litellm~=1.63.0` → `litellm~=1.110.2` for current model coverage. No code changes required; provider routing, fallback, and cache-marker behavior verified unchanged.
+ **LiteLLM upgraded 1.63.14 → 1.110.2** - dependency pin `litellm~=1.63.0` → `litellm~=1.110.2` for current model coverage. No runtime code changes; the existing suite passes against 1.110.2, and compatibility coverage (provider routing, Lightning translation, fallback and rate-limit handling, streaming mode, offline model-catalog guard) was added alongside the upgrade.
 
 ## [0.2.0] - 2026-02-17
 
