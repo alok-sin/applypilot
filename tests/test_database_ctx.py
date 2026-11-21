@@ -53,6 +53,7 @@ def test_init_schema_accepts_bare_connection(tmp_path: Path) -> None:
     assert "url" in cols
     assert "filter_reason" in cols  # added by the migration registry
     assert "tailored_resume_json_path" in cols
+    conn.close()
 
 
 def test_get_stats_for_ctx_reads_from_ctx_db(tmp_path: Path) -> None:

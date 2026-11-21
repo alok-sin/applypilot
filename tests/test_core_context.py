@@ -153,6 +153,9 @@ def test_concurrent_pipelines_do_not_cross_contaminate(tmp_path: Path) -> None:
                     "INSERT INTO scoreboard VALUES (?, ?)", (ctx.user.user_id, i)
                 )
             conn.commit()
+            # SqliteDatabase caches connections per thread; close this
+            # worker thread's connection so it is not leaked on GC.
+            ctx.user.db.close()
         except BaseException as exc:  # pragma: no cover - defensive
             errors.append(exc)
 

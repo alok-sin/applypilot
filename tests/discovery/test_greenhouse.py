@@ -397,6 +397,7 @@ class TestStoreJobs:
         row = cursor.fetchone()
         assert row[0] == "Test Job"
         assert row[1] == "Test Company"
+        conn.close()
 
     def test_store_duplicate_jobs(self, tmp_path):
         """Test that duplicate jobs are counted as existing."""
@@ -441,6 +442,7 @@ class TestStoreJobs:
         new, existing = _store_jobs(jobs, ctx=ctx)
         assert new == 0
         assert existing == 1
+        conn.close()
 
     def test_store_multiple_jobs(self, tmp_path):
         """Test storing multiple jobs at once."""
@@ -490,6 +492,7 @@ class TestStoreJobs:
 
         count = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
         assert count == 2
+        conn.close()
 
 
 class TestIntegration:
@@ -551,3 +554,4 @@ class TestIntegration:
         assert existing == 0
         count = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
         assert count == 1
+        conn.close()
