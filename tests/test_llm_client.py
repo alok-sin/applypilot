@@ -125,9 +125,12 @@ def test_chat_round_trips_real_litellm_completion(monkeypatch, model: str) -> No
     """Hermetic integration against the REAL litellm.completion().
 
     The wrapper only injects litellm's offline ``mock_response`` hook and
-    forwards every other kwarg to the installed litellm unchanged, so the
-    round trip fails loudly if the client's kwarg set drifts out of sync
-    with the installed litellm's completion() signature.
+    forwards every other kwarg to the installed litellm unchanged. This
+    exercises the real completion path — the client's kwargs are accepted
+    and the ModelResponse is parsed via choices[0].message.content — so it
+    is a compatibility/response-shape check, not a strict signature check:
+    LLMClient sends drop_params=True, so an unknown kwarg can be silently
+    accepted or dropped by litellm instead of raising TypeError.
     """
     real_completion = llm_module.litellm.completion
     captured: dict[str, object] = {}
